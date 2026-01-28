@@ -123,4 +123,73 @@ namespace FINGERPRINT {
 
         return hex_stream.str();  // First 12 hex characters
     }
+
+    std::string TableToJSONString(const zeek::TableVal* table){
+        zeek::ODesc d;
+        
+        table->Describe(&d);
+    
+        return d.Description();
+    }
+    
+    std::vector<std::string> convert_string_vector(const zeek::IntrusivePtr<zeek::VectorVal>& vec_val) {
+        std::vector<std::string> result;
+        if ( ! vec_val )
+            return result;
+    
+        unsigned int length = vec_val->Size();
+        result.reserve(length);
+    
+        for ( int i = 0; i < length; ++i )
+        {
+            zeek::IntrusivePtr<zeek::Val> element_val = vec_val->ValAt(i);
+            if ( ! element_val )
+                continue;
+    
+            zeek::IntrusivePtr<zeek::StringVal> str_val = cast_intrusive<zeek::StringVal>(element_val);
+    
+            if ( ! str_val )
+                continue;
+    
+            result.push_back(str_val->AsString()->ToStdString());
+        }
+    
+        return result;
+    }
+    
+    
+    std::vector<uint32_t> convert_count_vector_to_u32(const zeek::IntrusivePtr<zeek::VectorVal>& vec_val){
+        std::vector<uint32_t> result;
+        if ( ! vec_val )
+            return result;
+    
+        unsigned int length = vec_val->Size();
+        result.reserve(length);
+    
+        for ( int i = 0; i < length; ++i )
+        {
+            zeek::IntrusivePtr<zeek::Val> element_val = vec_val->ValAt(i);
+    
+            if ( ! element_val )
+                continue;
+    
+            zeek::IntrusivePtr<zeek::IntVal> int_val = cast_intrusive<zeek::IntVal>(element_val);
+    
+            if ( ! int_val )
+                continue;
+    
+            uint64_t full_value = int_val->AsCount();
+    
+            // Optional safety check to avoid overflow
+            if ( full_value > UINT32_MAX ) {
+                fprintf(stderr, "Warning: count %llu too large for uint32_t\n",
+                        static_cast<unsigned long long>(full_value));
+                continue;
+            }
+    
+            result.push_back(static_cast<uint32_t>(full_value));
+        }
+    
+        return result;
+    }
 }

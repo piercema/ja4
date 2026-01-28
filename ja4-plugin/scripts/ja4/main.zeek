@@ -7,7 +7,6 @@
 
 @load ./config
 @load base/protocols/ssl
-@load JA4/JA4 
 
 module FINGERPRINT::JA4;
 
@@ -63,6 +62,15 @@ event zeek_init() &priority=5 {
 }
 
 function do_ja4(c: connection) {
+  if (!c?$fp || !c$fp?$client_hello || !c$fp$client_hello?$version || c$fp$ja4$done) {
+    print("skipping JA4 computation");
+    return; 
+  }
+
+  print(c$fp);
+  
+
+  c$fp$ja4$uid = c$uid;
 
   # print(JA4::hello());
 

@@ -1,6 +1,5 @@
 module JA4;
 
-
 %%{
 #include "ja4.h"
 #include <string>
@@ -19,12 +18,10 @@ module JA4;
 
 %%}
 
-function calculate_ja4%(connection_val: any, delimiter: string%): any %{
-    zeek::RecordVal* connection = connection_val->AsRecordVal();
-    return do_ja4(connection, delimiter);
-%}
 
-function hello%(%): string
-    %{
-    return zeek::make_intrusive<zeek::StringVal>("Hello from C++ BIF!");    
-    %}
+function calculate_ja4%(connection_val: any, delimiter: string%): any %{
+    zeek::ValPtr signature;
+    zeek::RecordVal* connection = connection_val->AsRecordVal();
+    signature = do_ja4(connection, delimiter);
+    return signature;
+%}
