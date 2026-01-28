@@ -31,6 +31,7 @@ For more details on JA4+ and its implementations in other open-source tools (Pyt
     - [Usage in TShark](#usage-in-tshark)
 - [Using a Key File for TLS Decryption](#using-a-key-file-for-tls-decryption)
 - [Testing](#testing)
+- [Creating a Release](#creating-a-release)
 - [License](#license)
 
 ## Binaries
@@ -39,7 +40,13 @@ Download the latest JA4+ Wireshark plugin binaries from the [Releases](https://g
 
 ### Release Assets
 
-Plugin binaries are provided as dynamic libraries named according to the target platform. For example, `ja4.so.linux` for Linux or `ja4.dll` for Windows. Choose the appropriate file for your system.
+Release assets are named as follows:
+
+- `ja4.so.linux` (Linux)
+- `ja4.so.macos` (macOS)
+- `ja4.dll` (Windows)
+
+These files are attached to a release named like `wireshark-vX.Y.Z`. Choose the appropriate file for your system.
 
 ### Previous Wireshark Versions
 
@@ -47,13 +54,13 @@ You can also find binaries for the previous versions of Wireshark in the [binari
 
 ## Building
 
-Navigate to the `build-scripts` directory and run the script corresponding to your system. For example, `linux_build.sh` for Linux. The script will automatically clone Wireshark and build the plugin. The resulting binary can be found in `wireshark-4.4.0/build/run/plugins/4.4/epan/`. It will be named `ja4.so` on Linux or macOS and `ja4.dll` on Windows.
+Navigate to the `build-scripts` directory and run the script corresponding to your system. For example, `linux_build.sh` for Linux. The script will automatically clone Wireshark and build the plugin. The resulting binary can be found in `<relese-tag>/build/run/plugins/4.6/epan/`. It will be named `ja4.so` on Linux or macOS and `ja4.dll` on Windows.
 
 ## Installing JA4+ Plugin
 
 ### Installing Wireshark
 
-The plugin has been tested with Wireshark versions 4.4.0 and 4.2.0 on macOS and Windows, and version 4.0.6 on Linux.
+The plugin has been tested with Wireshark versions 4.6.0, 4.4.0 and, 4.2.0 on macOS and Windows, and version 4.0.6 on Linux.
 
 #### Linux
 
@@ -81,11 +88,11 @@ You can use the `tshark` CLI tool as well. Refer to [Installing tshark](../READM
 
 1. Move and rename `ja4.so` to the global Wireshark plugins directory:  
    ```bash
-   sudo mv ja4.so.linux /usr/lib/x86_64-linux-gnu/wireshark/plugins/4.4/epan/ja4.so
+   sudo mv ja4.so.linux /usr/lib/x86_64-linux-gnu/wireshark/plugins/4.6/epan/ja4.so
    ```
    or  
    ```bash
-   sudo mv ja4.so.linux /usr/lib/wireshark/plugins/4.4/epan/ja4.so
+   sudo mv ja4.so.linux /usr/lib/wireshark/plugins/4.6/epan/ja4.so
    ```
    *(The exact location depends on your system's distribution and Wireshark installation.)*
 2. Start Wireshark.
@@ -106,7 +113,7 @@ You can use the `tshark` CLI tool as well. Refer to [Installing tshark](../READM
 
 1. Copy `ja4.dll` to the global Wireshark plugins directory:  
    ```txt
-   C:\Program Files\Wireshark\plugins\4.4\epan\
+   C:\Program Files\Wireshark\plugins\4.6\epan\
    ```
 2. Start Wireshark.
 
@@ -168,6 +175,7 @@ JA4+ fields are found under `ja4.*` in Wireshark. These fields represent differe
 | **JA4SSH** (SSH Traffic) | `ja4.ja4ssh` |
 | **JA4T** (TCP Client) | `ja4.ja4t` |
 | **JA4TS** (TCP Server) | `ja4.ja4ts` |
+| **JA4D** (DHCP) | `ja4.ja4d` |
 
 ### Adding JA4+ Columns in Wireshark
 
@@ -202,6 +210,7 @@ Alternatively, you can manually modify Wireshark's **preferences file** using a 
    "JA4LS", "%Cus:ja4.ja4ls:0:R",
    "JA4X", "%Cus:ja4.ja4x:0:R",
    "JA4SSH", "%Cus:ja4.ja4ssh:0:R"
+   "JA4D", "%Cus:ja4.ja4d:0:R"
    ```
 
 3. Save the file and restart Wireshark.
@@ -257,6 +266,15 @@ Example usage:
 cd wireshark/test
 ./generate-output-files.sh
 pytest
+```
+
+## Creating a Release
+
+To create a Wireshark plugin release, push a tag starting with `wireshark-`, for example:
+
+```sh
+git tag wireshark-v0.1.1
+git push origin wireshark-v0.1.1
 ```
 
 ## License

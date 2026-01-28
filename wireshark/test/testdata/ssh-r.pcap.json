@@ -1,7 +1,6 @@
 [
   {
     "_index": "packets-2023-07-14",
-    "_type": "doc",
     "_score": null,
     "_source": {
       "layers": {
@@ -16,7 +15,6 @@
   },
   {
     "_index": "packets-2023-07-14",
-    "_type": "doc",
     "_score": null,
     "_source": {
       "layers": {
@@ -31,7 +29,6 @@
   },
   {
     "_index": "packets-2023-07-14",
-    "_type": "doc",
     "_score": null,
     "_source": {
       "layers": {
@@ -41,15 +38,20 @@
         "ja4.ja4l": [
           "94_128_5421"
         ],
+        "ja4.ja4l_delta": [
+          "57.4"
+        ],
         "ja4.ja4ls": [
           "32_64_9660"
+        ],
+        "ja4.ja4ls_delta": [
+          "297.2"
         ]
       }
     }
   },
   {
     "_index": "packets-2023-07-14",
-    "_type": "doc",
     "_score": null,
     "_source": {
       "layers": {
@@ -64,7 +66,6 @@
   },
   {
     "_index": "packets-2023-07-14",
-    "_type": "doc",
     "_score": null,
     "_source": {
       "layers": {
@@ -79,7 +80,6 @@
   },
   {
     "_index": "packets-2023-07-14",
-    "_type": "doc",
     "_score": null,
     "_source": {
       "layers": {
@@ -94,7 +94,6 @@
   },
   {
     "_index": "packets-2023-07-14",
-    "_type": "doc",
     "_score": null,
     "_source": {
       "layers": {
@@ -104,15 +103,20 @@
         "ja4.ja4l": [
           "14_64_115"
         ],
+        "ja4.ja4l_delta": [
+          "8.2"
+        ],
         "ja4.ja4ls": [
           "4171_116_8099"
+        ],
+        "ja4.ja4ls_delta": [
+          "1.9"
         ]
       }
     }
   },
   {
     "_index": "packets-2023-07-14",
-    "_type": "doc",
     "_score": null,
     "_source": {
       "layers": {
@@ -127,7 +131,6 @@
   },
   {
     "_index": "packets-2023-07-14",
-    "_type": "doc",
     "_score": null,
     "_source": {
       "layers": {
@@ -142,7 +145,6 @@
   },
   {
     "_index": "packets-2023-07-14",
-    "_type": "doc",
     "_score": null,
     "_source": {
       "layers": {
@@ -157,7 +159,6 @@
   },
   {
     "_index": "packets-2023-07-14",
-    "_type": "doc",
     "_score": null,
     "_source": {
       "layers": {
@@ -172,7 +173,6 @@
   },
   {
     "_index": "packets-2023-07-14",
-    "_type": "doc",
     "_score": null,
     "_source": {
       "layers": {
@@ -182,15 +182,20 @@
         "ja4.ja4l": [
           "12_64_230"
         ],
+        "ja4.ja4l_delta": [
+          "19.2"
+        ],
         "ja4.ja4ls": [
           "3169_116_7225"
+        ],
+        "ja4.ja4ls_delta": [
+          "2.3"
         ]
       }
     }
   },
   {
     "_index": "packets-2023-07-14",
-    "_type": "doc",
     "_score": null,
     "_source": {
       "layers": {
@@ -205,7 +210,6 @@
   },
   {
     "_index": "packets-2023-07-14",
-    "_type": "doc",
     "_score": null,
     "_source": {
       "layers": {
@@ -220,7 +224,6 @@
   },
   {
     "_index": "packets-2023-07-14",
-    "_type": "doc",
     "_score": null,
     "_source": {
       "layers": {
@@ -235,7 +238,6 @@
   },
   {
     "_index": "packets-2023-07-14",
-    "_type": "doc",
     "_score": null,
     "_source": {
       "layers": {
@@ -250,7 +252,6 @@
   },
   {
     "_index": "packets-2023-07-14",
-    "_type": "doc",
     "_score": null,
     "_source": {
       "layers": {
@@ -265,7 +266,6 @@
   },
   {
     "_index": "packets-2023-07-14",
-    "_type": "doc",
     "_score": null,
     "_source": {
       "layers": {
@@ -280,7 +280,6 @@
   },
   {
     "_index": "packets-2023-07-14",
-    "_type": "doc",
     "_score": null,
     "_source": {
       "layers": {
@@ -295,7 +294,6 @@
   },
   {
     "_index": "packets-2023-07-14",
-    "_type": "doc",
     "_score": null,
     "_source": {
       "layers": {

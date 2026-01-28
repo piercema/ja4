@@ -6,13 +6,13 @@
 # JA4+ (JA4S, JA4H, JA4L, JA4X, JA4SSH, JA4T) are licenced under the FoxIO License 1.1.
 # For full license text, see the repo root.
 */
+#define WS_LOG_DOMAIN "packet-ja4"
 
 #ifndef OOT_BUILD
 #include "config.h"
 #endif
 #include <wireshark.h>
 
-#include <glib.h>
 #include <math.h>
 #include <wsutil/to_str.h>
 
@@ -33,8 +33,9 @@
 #include <epan/packet.h>
 #include <epan/packet_info.h>
 #include <epan/prefs.h>
+#include <epan/tap.h>
 
-#define MAX_SSL_VESION(a, b) ((a) > (b) ? (a) : (b))
+#define MAX_SSL_VERSION(a, b) ((a) > (b) ? (a) : (b))
 #define IS_GREASE_TLS(x) ((((x) & 0x0f0f) == 0x0a0a) && (((x) & 0xff) == (((x) >> 8) & 0xff)))
 #define SAMPLE_COUNT 200
 
@@ -46,7 +47,7 @@ static inline fvalue_t *get_value_ptr(field_info *field) {
 #endif
 }
 
-static inline const guint8 *field_bytes(fvalue_t const *fv) {
+static inline const uint8_t *field_bytes(fvalue_t const *fv) {
 #if ((WIRESHARK_VERSION_MAJOR > 4) || (WIRESHARK_VERSION_MAJOR == 4 && WIRESHARK_VERSION_MINOR > 1))
     return fvalue_get_bytes_data((fvalue_t *)fv);
 #else
@@ -54,9 +55,9 @@ static inline const guint8 *field_bytes(fvalue_t const *fv) {
 #endif
 }
 
-static int proto_ja4;
-static int proto_http;
-static gint ett_ja4 = -1;
+static int proto_ja4 = -1;
+static int proto_http = -1;
+static int ett_ja4 = -1;
 static int hf_ja4s_raw = -1;
 static int hf_ja4s = -1;
 static int hf_ja4x_raw = -1;
@@ -65,7 +66,9 @@ static int hf_ja4h = -1;
 static int hf_ja4h_raw = -1;
 static int hf_ja4h_raw_original = -1;
 static int hf_ja4l = -1;
+static int hf_ja4l_delta = -1;
 static int hf_ja4ls = -1;
+static int hf_ja4ls_delta = -1;
 static int hf_ja4ssh = -1;
 static int hf_ja4t = -1;
 static int hf_ja4ts = -1;
@@ -75,9 +78,9 @@ static int dissect_ja4(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void
 
 static dissector_handle_t ja4_handle;
 
-static bool pref_omit_ja4h_zero_sections = FALSE;
+static bool pref_omit_ja4h_zero_sections = false;
 
-const value_string ssl_versions[] = {
+static const value_string ssl_versions[] = {
     {0x0002, "s2"},
     {0x0300, "s3"},
     {0x0301, "10"},
@@ -90,8 +93,7 @@ const value_string ssl_versions[] = {
     {0x00,   NULL}
 };
 
-#define HFIDS 61
-const char *interesting_hfids[HFIDS] = {
+static const char *interesting_hfids[] = {
     "tls.handshake.type",
     "dtls.handshake.type",
     "tls.handshake.version",
@@ -147,20 +149,24 @@ const char *interesting_hfids[HFIDS] = {
     "quic.long.packet_type",
     "dhcp.option.dhcp",
     "dhcp.option.dhcp_max_message_size",
+    "dhcp.option.requested_ip_address",
+    "dhcp.fqdn.name",
     "dhcp.option.type",
     "dhcp.option.request_list_item",
     "dhcpv6.msgtype",
     "dhcpv6.duid.bytes",
+    "dhcpv6.iata",
+    "dhcpv6.client_domain",
     "dhcpv6.option.type",
     "dhcpv6.requested_option_code",
 };
 
 typedef struct {
-    gchar proto;
-    guint32 version;
-    gboolean sni;    // only for JA4 client
-    gint cipher_len; // only for ja4 client
-    gint ext_len;
+    char proto;
+    uint32_t version;
+    bool sni;    // only for JA4 client
+    int cipher_len; // only for ja4 client
+    int ext_len;
     wmem_strbuf_t *alpn;
     wmem_strbuf_t *ciphers;
     wmem_strbuf_t *extensions;
@@ -185,9 +191,9 @@ typedef struct {
     wmem_strbuf_t *sorted_cookie_fields;
     wmem_strbuf_t *sorted_cookie_values;
     int num_headers;
-    gboolean cookie;
-    gboolean referer;
-    gboolean http2;
+    bool cookie;
+    bool referer;
+    bool http2;
 } ja4h_info_t;
 
 typedef struct {
@@ -198,9 +204,11 @@ typedef struct {
 } ja4t_info_t;
 
 typedef struct {
-    gchar proto;
-    guint32 type;
+    char proto;
+    wmem_strbuf_t *type;
     wmem_strbuf_t *size;
+    char ip;
+    char fqdn;
     wmem_strbuf_t *options;
     wmem_strbuf_t *request_list;
 } ja4d_info_t;
@@ -252,11 +260,21 @@ typedef struct {
 
 typedef struct {
     int hf_field;
-    char *hf_value;
+    enum ftenum hf_type;
+    void *hf_value;
 } packet_hash_t;
 
-wmem_map_t *conn_hash = NULL;
-wmem_map_t *quic_conn_hash = NULL;
+typedef struct {
+    int frame_number;
+    int num_of_hashes;
+    wmem_array_t *pkt_hashes;
+    bool complete;
+    char *insert_at;
+} pkt_info_t;
+
+static wmem_map_t *conn_hash = NULL;
+static wmem_map_t *quic_conn_hash = NULL;
+static wmem_map_t *packet_table = NULL;
 
 static int64_t timediff(nstime_t *current, nstime_t *prev) {
     nstime_t result;
@@ -264,14 +282,14 @@ static int64_t timediff(nstime_t *current, nstime_t *prev) {
     return (int64_t)(round(nstime_to_sec(&result)));
 }
 
-gint sort_by_string(gconstpointer s1, gconstpointer s2) {
+static int sort_by_string(const void *s1, const void *s2) {
     return strcmp(
         wmem_strbuf_get_str(((http_cookie_t *)s1)->field),
         wmem_strbuf_get_str(((http_cookie_t *)s2)->field)
     );
 }
 
-proto_tree *locate_tree(proto_tree *tree, const char *s) {
+static proto_tree *locate_tree(proto_tree *tree, const char *s) {
     proto_tree *position = tree->first_child;
     while ((position != NULL) && (position->finfo != NULL) &&
            (strcmp(position->finfo->hfinfo->abbrev, s) != 0)) {
@@ -280,30 +298,94 @@ proto_tree *locate_tree(proto_tree *tree, const char *s) {
     return position;
 }
 
-void update_tree_item(
-    tvbuff_t *tvb, proto_tree *tree, proto_tree **ja4_tree, int field,
-    const char *str, const char *insert_at
-) {
-
-    // We get to the right part of the tree using locate_tree and insert the
-    // hash there.
-
-    proto_item *ja4_ti;
-
-    if (*ja4_tree == NULL) {
-        proto_tree *tree_location = locate_tree(tree, insert_at);
-
-        if (tree_location == NULL)
-            return;
-
-        ja4_ti = proto_tree_add_item(tree_location, proto_ja4, tvb, 0, -1, ENC_NA);
-        *ja4_tree = proto_item_add_subtree(ja4_ti, ett_ja4);
+static pkt_info_t *packet_table_lookup(int frame_number) {
+    pkt_info_t *data = wmem_map_lookup(packet_table, GINT_TO_POINTER(frame_number));
+    if (data == NULL) {
+        data = wmem_new0(wmem_file_scope(), pkt_info_t);
+        data->pkt_hashes = wmem_array_new(wmem_file_scope(), sizeof(packet_hash_t));
+        data->frame_number = frame_number;
+        data->num_of_hashes = 0;
+        data->complete = false;
+        data->insert_at = NULL;
+        wmem_map_insert(packet_table, GINT_TO_POINTER(frame_number), data);
     }
-
-    proto_tree_add_string(*ja4_tree, field, NULL, 0, 0, str);
+    return data;
 }
 
-void update_mode(int pkt_len, wmem_map_t *hash_table) {
+static void update_tree_item(int frame_number, int field, const void *data, const char *insert_at) {
+    // Store in packet table for column display
+    pkt_info_t *pi = packet_table_lookup(frame_number);
+    if (!pi->complete) {
+        packet_hash_t *recorded_hash = wmem_new0(wmem_file_scope(), packet_hash_t);
+        recorded_hash->hf_field = field;
+        recorded_hash->hf_type = proto_registrar_get_ftype(field);
+        if (recorded_hash->hf_type == FT_STRING) {
+            recorded_hash->hf_value = wmem_strbuf_new(wmem_file_scope(), (const char *)data);
+        } else if (recorded_hash->hf_type == FT_DOUBLE) {
+            double *val_ptr = wmem_new(wmem_file_scope(), double);
+            *val_ptr = *(const double *)data;
+            recorded_hash->hf_value = val_ptr;
+        } else {
+            // Unsupported type
+            recorded_hash->hf_value = wmem_strbuf_new(wmem_file_scope(), "");
+        }
+        wmem_array_append(pi->pkt_hashes, recorded_hash, 1);
+        pi->num_of_hashes++;
+        pi->insert_at = (char *)insert_at;
+    }
+}
+
+static void mark_complete(int frame_number) {
+    pkt_info_t *pi = packet_table_lookup(frame_number);
+    pi->complete = true;
+}
+
+// Wireshark columns only work if the hash is added to the tree and displayed
+// using proto_tree_add_string without using proto_item_append_text
+// Tshark OTOH takes both values from the JA4 tree as well as from here to show them
+// when using the -T fields option
+static int
+display_hashes_from_packet_table(proto_tree *tree, tvbuff_t *tvb, int frame_number) {
+    pkt_info_t *pi = packet_table_lookup(frame_number);
+    if ((pi->complete) && (pi->insert_at)) {
+        proto_tree *tree_location = locate_tree(tree, pi->insert_at);
+        if (tree_location == NULL)
+            return 0;
+
+        proto_tree *sub_tree = NULL;
+        proto_tree *child = tree_location->first_child;
+        while (child != NULL && child->finfo != NULL) {
+            if (child->finfo->hfinfo && (strcmp(child->finfo->hfinfo->abbrev, "ja4") == 0 ||
+                                         strncmp(child->finfo->hfinfo->abbrev, "ja4.", 4) == 0)) {
+                // Found an existing JA4 subtree
+                sub_tree = child;
+                break;
+            }
+            child = child->next;
+        }
+        if (sub_tree == NULL) {
+            proto_item *ja4_ti = proto_tree_add_item(tree_location, proto_ja4, tvb, 0, -1, ENC_NA);
+            sub_tree = proto_item_add_subtree(ja4_ti, ett_ja4);
+        }
+
+        if (sub_tree == NULL || sub_tree->finfo == NULL || sub_tree->finfo->tree_type == -1) {
+            return 0;
+        }
+
+        for (int i = 0; i < pi->num_of_hashes; i++) {
+            packet_hash_t *hash = (packet_hash_t *)wmem_array_index(pi->pkt_hashes, i);
+            if (hash->hf_type == FT_DOUBLE) {
+                proto_tree_add_double(sub_tree, hash->hf_field, NULL, 0, 0, *(double *)hash->hf_value);
+            } else {
+                proto_tree_add_string(sub_tree, hash->hf_field, NULL, 0, 0, wmem_strbuf_get_str((wmem_strbuf_t *)hash->hf_value));
+            }
+        }
+        return pi->num_of_hashes;
+    }
+    return 0;
+}
+
+static void update_mode(int pkt_len, wmem_map_t *hash_table) {
     int counter = GPOINTER_TO_INT(wmem_map_lookup(hash_table, GINT_TO_POINTER(pkt_len)));
     if (counter == 0) {
         wmem_map_insert(hash_table, GINT_TO_POINTER(pkt_len), GINT_TO_POINTER(1));
@@ -313,10 +395,10 @@ void update_mode(int pkt_len, wmem_map_t *hash_table) {
     }
 }
 
-int get_max_mode(wmem_map_t *hash_table) {
+static int get_max_mode(wmem_allocator_t *scratch, wmem_map_t *hash_table) {
     int counter = 0;
     int max_mode = 0;
-    wmem_list_t *keys = wmem_map_get_keys(wmem_file_scope(), hash_table);
+    wmem_list_t *keys = wmem_map_get_keys(scratch, hash_table);
     wmem_list_frame_t *key = wmem_list_head(keys);
     while (key) {
         int pkt_len = GPOINTER_TO_INT(wmem_list_frame_data(key));
@@ -334,8 +416,7 @@ int get_max_mode(wmem_map_t *hash_table) {
     return max_mode;
 }
 
-conn_info_t *conn_lookup(char proto, int stream) {
-
+static conn_info_t *conn_lookup(char proto, int stream) {
     wmem_map_t *conn = NULL;
     if (proto == 'q') {
         conn = quic_conn_hash;
@@ -376,7 +457,7 @@ conn_info_t *conn_lookup(char proto, int stream) {
     return data;
 }
 
-void decode_http_lang(wmem_allocator_t *scope, wmem_strbuf_t **out, const char *val) {
+static void decode_http_lang(wmem_allocator_t *scope, wmem_strbuf_t **out, const char *val) {
     wmem_strbuf_t *lang = wmem_strbuf_new(scope, "");
     int count = 0;
 
@@ -407,28 +488,29 @@ void decode_http_lang(wmem_allocator_t *scope, wmem_strbuf_t **out, const char *
     }
     wmem_strbuf_truncate(lang, 4);
 
-    wmem_strbuf_append_printf(*out, "%s", wmem_strbuf_get_str(lang));
+    wmem_strbuf_append(*out, wmem_strbuf_get_str(lang));
 
     wmem_strbuf_destroy(lang);
 }
 
-void decode_http_version(wmem_strbuf_t **out, const char *val) {
-    gchar **strings;
+static void decode_http_version(wmem_strbuf_t **out, const char *val) {
+    char **strings;
     strings = g_strsplit(val, "/", 2);
     if (strings[1] != NULL) {
         for (int i = 0; i < (int)strlen(strings[1]); i++) {
             if (strings[1][i] != '.') {
-                wmem_strbuf_append_printf(*out, "%c", g_ascii_tolower(strings[1][i]));
+                wmem_strbuf_append_c(*out, g_ascii_tolower(strings[1][i]));
             }
         }
 
         if (wmem_strbuf_get_len(*out) <= 1) {
-            wmem_strbuf_append_printf(*out, "%s", "0");
+            wmem_strbuf_append(*out, "0");
         }
     }
+    g_strfreev(strings);
 }
 
-void create_sorted_cookies(wmem_strbuf_t **fields, wmem_strbuf_t **values, wmem_list_t *l) {
+static void create_sorted_cookies(wmem_strbuf_t **fields, wmem_strbuf_t **values, wmem_list_t *l) {
     wmem_list_frame_t *curr_entry = wmem_list_head(l);
     http_cookie_t *curr_cookie = NULL;
     while (curr_entry && wmem_list_frame_next(curr_entry)) {
@@ -443,15 +525,15 @@ void create_sorted_cookies(wmem_strbuf_t **fields, wmem_strbuf_t **values, wmem_
 
     // Append last entry without a trailing comma
     curr_cookie = wmem_list_frame_data(curr_entry);
-    wmem_strbuf_append_printf(*fields, "%s", wmem_strbuf_get_str(curr_cookie->field));
+    wmem_strbuf_append(*fields, wmem_strbuf_get_str(curr_cookie->field));
     wmem_strbuf_append_printf(
         *values, "%s=%s", wmem_strbuf_get_str(curr_cookie->field),
         wmem_strbuf_get_str(curr_cookie->value)
     );
 }
 
-char *ja4s_r(ja4_info_t *data) {
-    wmem_strbuf_t *display = wmem_strbuf_new(wmem_file_scope(), "");
+static char *ja4s_r(wmem_allocator_t *scope, ja4_info_t *data) {
+    wmem_strbuf_t *display = wmem_strbuf_new(scope, "");
     wmem_strbuf_append_printf(
         display, "%c%s%02d%c%c_%s_%s", data->proto,
         val_to_str_const(data->version, ssl_versions, "00"), data->ext_len,
@@ -461,12 +543,12 @@ char *ja4s_r(ja4_info_t *data) {
             : '0',
         wmem_strbuf_get_str(data->ciphers), wmem_strbuf_get_str(data->extensions)
     );
-    return (char *)wmem_strbuf_get_str(display);
+    return wmem_strbuf_finalize(display);
 }
 
-char *ja4s(ja4_info_t *data) {
-    wmem_strbuf_t *display = wmem_strbuf_new(wmem_file_scope(), "");
-    gchar *_hash =
+static char *ja4s(wmem_allocator_t *scope, ja4_info_t *data) {
+    wmem_strbuf_t *display = wmem_strbuf_new(scope, "");
+    char *_hash =
         g_compute_checksum_for_string(G_CHECKSUM_SHA256, wmem_strbuf_get_str(data->extensions), -1);
     wmem_strbuf_append_printf(
         display, "%c%s%02d%c%c_%s_%12.12s", data->proto,
@@ -480,16 +562,16 @@ char *ja4s(ja4_info_t *data) {
     );
     if (_hash != NULL)
         g_free(_hash);
-    return (char *)wmem_strbuf_get_str(display);
+    return wmem_strbuf_finalize(display);
 }
 
-char *ja4x(cert_t *cert) {
-    wmem_strbuf_t *display = wmem_strbuf_new(wmem_file_scope(), "");
-    gchar *hash1 =
+static char *ja4x(wmem_allocator_t *scope, cert_t *cert) {
+    wmem_strbuf_t *display = wmem_strbuf_new(scope, "");
+    char *hash1 =
         g_compute_checksum_for_string(G_CHECKSUM_SHA256, wmem_strbuf_get_str(cert->oids[0]), -1);
-    gchar *hash2 =
+    char *hash2 =
         g_compute_checksum_for_string(G_CHECKSUM_SHA256, wmem_strbuf_get_str(cert->oids[1]), -1);
-    gchar *hash3 =
+    char *hash3 =
         g_compute_checksum_for_string(G_CHECKSUM_SHA256, wmem_strbuf_get_str(cert->oids[2]), -1);
     wmem_strbuf_append_printf(
         display, "%12.12s_%12.12s_%12.12s",
@@ -503,11 +585,11 @@ char *ja4x(cert_t *cert) {
         g_free(hash2);
     if (hash3 != NULL)
         g_free(hash3);
-    return (char *)wmem_strbuf_get_str(display);
+    return wmem_strbuf_finalize(display);
 }
 
-char *ja4h_r(ja4h_info_t *data) {
-    wmem_strbuf_t *display = wmem_strbuf_new(wmem_file_scope(), "");
+static char *ja4h_r(wmem_allocator_t *scope, ja4h_info_t *data) {
+    wmem_strbuf_t *display = wmem_strbuf_new(scope, "");
     wmem_strbuf_append_printf(
         display, "%s%s%s%s%02d%s_%s_%s_%s", wmem_strbuf_get_str(data->method),
         wmem_strbuf_get_str(data->version), data->cookie ? "c" : "n", data->referer ? "r" : "n",
@@ -515,11 +597,11 @@ char *ja4h_r(ja4h_info_t *data) {
         wmem_strbuf_get_str(data->sorted_cookie_fields),
         wmem_strbuf_get_str(data->sorted_cookie_values)
     );
-    return (char *)wmem_strbuf_get_str(display);
+    return wmem_strbuf_finalize(display);
 }
 
-char *ja4h_ro(ja4h_info_t *data) {
-    wmem_strbuf_t *display = wmem_strbuf_new(wmem_file_scope(), "");
+static char *ja4h_ro(wmem_allocator_t *scope, ja4h_info_t *data) {
+    wmem_strbuf_t *display = wmem_strbuf_new(scope, "");
     wmem_strbuf_append_printf(
         display, "%s%s%s%s%02d%s_%s_%s_%s", wmem_strbuf_get_str(data->method),
         wmem_strbuf_get_str(data->version), data->cookie ? "c" : "n", data->referer ? "r" : "n",
@@ -527,17 +609,17 @@ char *ja4h_ro(ja4h_info_t *data) {
         wmem_strbuf_get_str(data->unsorted_cookie_fields),
         wmem_strbuf_get_str(data->unsorted_cookie_values)
     );
-    return (char *)wmem_strbuf_get_str(display);
+    return wmem_strbuf_finalize(display);
 }
 
-char *ja4h(ja4h_info_t *data) {
-    wmem_strbuf_t *display = wmem_strbuf_new(wmem_file_scope(), "");
-    gchar *hash1 =
+static char *ja4h(wmem_allocator_t *scope, ja4h_info_t *data) {
+    wmem_strbuf_t *display = wmem_strbuf_new(scope, "");
+    char *hash1 =
         g_compute_checksum_for_string(G_CHECKSUM_SHA256, wmem_strbuf_get_str(data->headers), -1);
-    gchar *hash2 = g_compute_checksum_for_string(
+    char *hash2 = g_compute_checksum_for_string(
         G_CHECKSUM_SHA256, wmem_strbuf_get_str(data->sorted_cookie_fields), -1
     );
-    gchar *hash3 = g_compute_checksum_for_string(
+    char *hash3 = g_compute_checksum_for_string(
         G_CHECKSUM_SHA256, wmem_strbuf_get_str(data->sorted_cookie_values), -1
     );
     const char *zero_hash = pref_omit_ja4h_zero_sections ? "" : "000000000000";
@@ -553,22 +635,22 @@ char *ja4h(ja4h_info_t *data) {
         g_free(hash2);
     if (hash3 != NULL)
         g_free(hash3);
-    return (char *)wmem_strbuf_get_str(display);
+    return wmem_strbuf_finalize(display);
 }
 
-char *ja4ssh(conn_info_t *conn) {
-    wmem_strbuf_t *display = wmem_strbuf_new(wmem_file_scope(), "");
+static char *ja4ssh(wmem_allocator_t *scope, conn_info_t *conn) {
+    wmem_strbuf_t *display = wmem_strbuf_new(scope, "");
     wmem_strbuf_append_printf(
-        display, "c%ds%d_c%ds%d_c%ds%d", get_max_mode(conn->client_mode),
-        get_max_mode(conn->server_mode), conn->client_pkts, conn->server_pkts,
+        display, "c%ds%d_c%ds%d_c%ds%d", get_max_mode(scope, conn->client_mode),
+        get_max_mode(scope, conn->server_mode), conn->client_pkts, conn->server_pkts,
         conn->tcp_client_acks, conn->tcp_server_acks
     );
-    return (char *)wmem_strbuf_get_str(display);
+    return wmem_strbuf_finalize(display);
 }
 
 // Compute JA4T
-char *ja4t(ja4t_info_t *data, conn_info_t *conn) {
-    wmem_strbuf_t *display = wmem_strbuf_new(wmem_file_scope(), "");
+static char *ja4t(wmem_allocator_t *scope, ja4t_info_t *data, conn_info_t *conn) {
+    wmem_strbuf_t *display = wmem_strbuf_new(scope, "");
     if (wmem_strbuf_get_len(data->tcp_options) > 0)
         wmem_strbuf_truncate(data->tcp_options, wmem_strbuf_get_len(data->tcp_options) - 1);
     if (data->window_scale == 0) {
@@ -588,12 +670,12 @@ char *ja4t(ja4t_info_t *data, conn_info_t *conn) {
     }
 
     if ((conn != NULL) && (conn->syn_ack_count > 1)) {
-        wmem_strbuf_append_printf(display, "%c", '_');
+        wmem_strbuf_append_c(display, '_');
         for (int i = 1; i < conn->syn_ack_count; i++) {
             int64_t diff = timediff(&conn->syn_ack_times[i], &conn->syn_ack_times[i - 1]);
             wmem_strbuf_append_printf(display, "%" PRId64, diff);
             if (i < (conn->syn_ack_count - 1)) {
-                wmem_strbuf_append_printf(display, "%c", '-');
+                wmem_strbuf_append_c(display, '-');
             }
         }
         if (!nstime_is_zero(&conn->rst_time)) {
@@ -602,26 +684,29 @@ char *ja4t(ja4t_info_t *data, conn_info_t *conn) {
         }
     }
 
-    return (char *)wmem_strbuf_get_str(display);
+    return wmem_strbuf_finalize(display);
 }
 
-char *ja4d(ja4d_info_t *data) {
-    wmem_strbuf_t *display = wmem_strbuf_new(wmem_file_scope(), "");
+static char *ja4d(wmem_allocator_t *scope, ja4d_info_t *data) {
+    wmem_strbuf_t *display = wmem_strbuf_new(scope, "");
+    if (wmem_strbuf_get_len(data->type) == 0)
+        wmem_strbuf_append_printf(data->type, "00000");
     if (wmem_strbuf_get_len(data->size) == 0)
-        wmem_strbuf_append_printf(data->size, "00");
+        wmem_strbuf_append_printf(data->size, "0000");
     if (wmem_strbuf_get_len(data->options) == 0)
         wmem_strbuf_append_printf(data->options, "00");
     if (wmem_strbuf_get_len(data->request_list) == 0)
         wmem_strbuf_append_printf(data->request_list, "00");
     wmem_strbuf_append_printf(
-        display, "%c-%d-%s_%s_%s",
-        data->proto,
-        data->type,
+        display, "%s%s%c%c_%s_%s",
+        wmem_strbuf_get_str(data->type),
         wmem_strbuf_get_str(data->size),
+        data->ip,
+        data->fqdn,
         wmem_strbuf_get_str(data->options),
         wmem_strbuf_get_str(data->request_list)
     );
-    return (char *)wmem_strbuf_get_str(display);
+    return wmem_strbuf_finalize(display);
 }
 
 static void init_ja4_data(packet_info *pinfo, ja4_info_t *ja4_data) {
@@ -643,7 +728,7 @@ static void init_ja4_data(packet_info *pinfo, ja4_info_t *ja4_data) {
 }
 
 static void set_ja4s_extensions(proto_tree *tree, ja4_info_t *data) {
-    guint value;
+    unsigned value;
     GPtrArray *items;
     if (data->proto == 'd') {
         items =
@@ -653,7 +738,7 @@ static void set_ja4s_extensions(proto_tree *tree, ja4_info_t *data) {
             proto_find_finfo(tree, proto_registrar_get_id_byname("tls.handshake.extension.type"));
     }
     if (items) {
-        guint i;
+        unsigned i;
         for (i = 0; i < items->len; i++) {
             field_info *field = (field_info *)g_ptr_array_index(items, i);
             value = fvalue_get_uinteger(get_value_ptr(field));
@@ -668,7 +753,7 @@ static void set_ja4s_extensions(proto_tree *tree, ja4_info_t *data) {
                 data->ext_len++;
             }
         }
-        g_ptr_array_free(items, TRUE);
+        g_ptr_array_free(items, true);
     }
     if (wmem_strbuf_get_len(data->extensions) > 3) {
         wmem_strbuf_truncate(data->extensions, wmem_strbuf_get_len(data->extensions) - 1);
@@ -676,7 +761,7 @@ static void set_ja4s_extensions(proto_tree *tree, ja4_info_t *data) {
 }
 
 static void set_ja4_ciphers(proto_tree *tree, ja4_info_t *data) {
-    guint value;
+    unsigned value;
     GPtrArray *items;
     if (data->proto == 'd') {
         items = proto_find_finfo(tree, proto_registrar_get_id_byname("dtls.handshake.ciphersuite"));
@@ -685,7 +770,7 @@ static void set_ja4_ciphers(proto_tree *tree, ja4_info_t *data) {
     }
 
     if (items) {
-        guint i;
+        unsigned i;
         for (i = 0; i < items->len; i++) {
             field_info *field = (field_info *)g_ptr_array_index(items, i);
             value = fvalue_get_uinteger(get_value_ptr(field));
@@ -697,29 +782,105 @@ static void set_ja4_ciphers(proto_tree *tree, ja4_info_t *data) {
                 data->cipher_len++;
             }
         }
-        g_ptr_array_free(items, TRUE);
+        g_ptr_array_free(items, true);
     }
     if (wmem_strbuf_get_len(data->ciphers) > 3) {
         wmem_strbuf_truncate(data->ciphers, wmem_strbuf_get_len(data->ciphers) - 1);
     }
 }
 
+static const char *get_dhcp_type_code(unsigned type) {
+    // Index is the DHCP type number (0 unused)
+    static const char *map[] = {
+        NULL,    // 0
+        "disco", // 1
+        "offer", // 2
+        "reqst", // 3
+        "decln", // 4
+        "dpack", // 5
+        "dpnak", // 6
+        "relse", // 7
+        "infor", // 8
+        "frenw", // 9
+        "lqery", // 10
+        "lunas", // 11
+        "lunkn", // 12
+        "lactv", // 13
+        "blklq", // 14
+        "lqdon", // 15
+        "actlq", // 16
+        "lqsta", // 17
+        "dhtls"  // 18
+    };
+    if (type < G_N_ELEMENTS(map)) {
+        return map[type];
+    }
+    return NULL;
+}
+
+static const char *get_dhcpv6_type_code(unsigned type) {
+    // Index is the DHCPv6 message type number (0 unused)
+    static const char *map[] = {
+        NULL,    // 0
+        "solct", // 1
+        "advrt", // 2
+        "reqst", // 3
+        "confm", // 4
+        "renew", // 5
+        "rebnd", // 6
+        "reply", // 7
+        "relse", // 8
+        "decln", // 9
+        "recon", // 10
+        "inreq", // 11
+        "rlayf", // 12
+        "rlayr", // 13
+        "query", // 14
+        "qrply", // 15
+        "qdone", // 16
+        "qdata", // 17
+        "rereq", // 18
+        "rrply", // 19
+        "v4qry", // 20
+        "v4res", // 21
+        "acqry", // 22
+        "sttls", // 23
+        "bdudp", // 24
+        "brply", // 25
+        "poreq", // 26
+        "pores", // 27
+        "urqst", // 28
+        "ureqa", // 29
+        "udone", // 30
+        "conne", // 31
+        "connr", // 32
+        "dconn", // 33
+        "state", // 34
+        "conta", // 35
+        "arinf", // 36
+        "arrep"  // 37
+    };
+    if (type < G_N_ELEMENTS(map)) {
+        return map[type];
+    }
+    return NULL;
+}
+
 static int dissect_ja4(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *dummy _U_) {
-    guint32 handshake_type = 0;
-    gboolean alpn_visited = false;
-    gboolean dhcpv6_option_type_1_exists = false;
-    proto_tree *ja4_tree = NULL;
+    uint32_t handshake_type = 0;
+    bool alpn_visited = false;
+    bool dhcpv6_option_type_1_exists = false;
 
     // For JA4C/S, record signature algorithms only when extension type == 13
     int record_signatures = 0;
 
     // For JA4X
-    guint cert_num = -1;
-    guint oid_type = -1;
+    unsigned cert_num = -1;
+    unsigned oid_type = -1;
     wmem_array_t *certificate_list = wmem_array_sized_new(pinfo->pool, sizeof(cert_t), 100);
 
     // For JA4H
-    gchar **strings;
+    char **strings;
     int http_req = -100;
 
     // packet level stuff
@@ -737,6 +898,10 @@ static int dissect_ja4(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void
     int syn = 0;
 
     if (tree == NULL)
+        return tvb_captured_length(tvb);
+
+    int hashes = display_hashes_from_packet_table(tree, tvb, pinfo->num);
+    if (hashes > 0)
         return tvb_captured_length(tvb);
 
     ja4_info_t ja4_data;
@@ -758,15 +923,17 @@ static int dissect_ja4(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void
     ja4h_data.sorted_cookie_values = wmem_strbuf_new(pinfo->pool, "");
 
     ja4t_info_t ja4t_data;
-    ja4t_data.tcp_options = wmem_strbuf_new(wmem_file_scope(), "");
+    ja4t_data.tcp_options = wmem_strbuf_new(pinfo->pool, "");
     ja4t_data.mss_val = 0;
     ja4t_data.window_scale = 0;
     ja4t_data.window_size = 0;
 
     ja4d_info_t ja4d_data;
     ja4d_data.proto = 0;
-    ja4d_data.type = 0;
+    ja4d_data.type = wmem_strbuf_new(pinfo->pool, "");
     ja4d_data.size = wmem_strbuf_new(pinfo->pool, "");
+    ja4d_data.ip = 'n';
+    ja4d_data.fqdn = 'n';
     ja4d_data.options = wmem_strbuf_new(pinfo->pool, "");
     ja4d_data.request_list = wmem_strbuf_new(pinfo->pool, "");
 
@@ -787,7 +954,7 @@ static int dissect_ja4(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void
 
     GPtrArray *items = proto_all_finfos(tree);
     if (items != NULL) {
-        for (guint item_idx = 0; item_idx < items->len; item_idx++) {
+        for (unsigned item_idx = 0; item_idx < items->len; item_idx++) {
             field_info *field = (field_info *)g_ptr_array_index(items, item_idx);
 
             if ((strcmp(field->hfinfo->abbrev, "tls.handshake.type") == 0) ||
@@ -797,12 +964,8 @@ static int dissect_ja4(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void
                 if (handshake_type == 2) {
                     set_ja4_ciphers(tree, &ja4_data);
                     set_ja4s_extensions(tree, &ja4_data);
-                    update_tree_item(
-                        tvb, tree, &ja4_tree, hf_ja4s, ja4s(&ja4_data), proto
-                    );
-                    update_tree_item(
-                        tvb, tree, &ja4_tree, hf_ja4s_raw, ja4s_r(&ja4_data), proto
-                    );
+                    update_tree_item(pinfo->num, hf_ja4s, ja4s(pinfo->pool, &ja4_data), proto);
+                    update_tree_item(pinfo->num, hf_ja4s_raw, ja4s_r(pinfo->pool, &ja4_data), proto);
                 }
 
                 // Again for DTLS, we break
@@ -841,7 +1004,7 @@ static int dissect_ja4(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void
                 )) {
                 if (!IS_GREASE_TLS(fvalue_get_uinteger(get_value_ptr(field)))) {
                     ja4_data.version =
-                        MAX_SSL_VESION(ja4_data.version, fvalue_get_uinteger(get_value_ptr(field)));
+                        MAX_SSL_VERSION(ja4_data.version, fvalue_get_uinteger(get_value_ptr(field)));
                 }
             }
 
@@ -850,9 +1013,9 @@ static int dissect_ja4(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void
                 if (!alpn_visited) {
                     const char *alpn_str = fvalue_get_string(get_value_ptr(field));
                     if (!g_ascii_isalnum(alpn_str[0])) {
-                        wmem_strbuf_append_printf(ja4_data.alpn, "%s", "99");
+                        wmem_strbuf_append(ja4_data.alpn, "99");
                     } else {
-                        wmem_strbuf_append_printf(ja4_data.alpn, "%s", alpn_str);
+                        wmem_strbuf_append(ja4_data.alpn, alpn_str);
                     }
                     alpn_visited = true;
                 }
@@ -862,7 +1025,7 @@ static int dissect_ja4(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void
             if ((strcmp(field->hfinfo->abbrev, "tls.handshake.certificate") == 0) ||
                 (strcmp(field->hfinfo->abbrev, "dtls.handshake.certificate") == 0)) {
                 cert_t cert;
-                for (guint n = 0; n < 3; n++) {
+                for (unsigned n = 0; n < 3; n++) {
                     cert.oids[n] = wmem_strbuf_new(pinfo->pool, "");
                 }
                 cert.raw = wmem_strbuf_new(pinfo->pool, "");
@@ -883,8 +1046,8 @@ static int dissect_ja4(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void
                     wmem_strbuf_append(current_cert->oids[oid_type], ",");
                 }
                 // BUG-FIX: Ja4x should use Hex codes instead of ascii
-                const guint8 *bytes = field_bytes(get_value_ptr(field));
-                for (gint j = 0; j < field->length; j++) {
+                const uint8_t *bytes = field_bytes(get_value_ptr(field));
+                for (int j = 0; j < field->length; j++) {
                     wmem_strbuf_append_printf(current_cert->oids[oid_type], "%02x", bytes[j]);
                 }
             }
@@ -899,14 +1062,13 @@ static int dissect_ja4(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void
                     wmem_strbuf_append(current_cert->oids[oid_type], ",");
                 }
                 // BUG-FIX: Ja4x should use Hex codes instead of ascii
-                const guint8 *bytes = field_bytes(get_value_ptr(field));
-                for (gint j = 0; j < field->length; j++) {
+                const uint8_t *bytes = field_bytes(get_value_ptr(field));
+                for (int j = 0; j < field->length; j++) {
                     wmem_strbuf_append_printf(current_cert->oids[oid_type], "%02x", bytes[j]);
                 }
             }
 
             // Added for JA4H - HTTP1.0 and 1.1
-
             static const struct {
                 const char *method;
                 const char *code;
@@ -963,20 +1125,20 @@ static int dissect_ja4(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void
                 const char *method_str = fvalue_get_string(get_value_ptr(field));
                 const char *ja4h_code = "00"; // fallback for unknown methods
 
-                for (guint i = 0; http_method_map[i].method != NULL; i++) {
+                for (unsigned i = 0; http_method_map[i].method != NULL; i++) {
                     if (g_ascii_strcasecmp(method_str, http_method_map[i].method) == 0) {
                         ja4h_code = http_method_map[i].code;
                         break;
                     }
                 }
 
-                wmem_strbuf_append_printf(ja4h_data.method, "%s", ja4h_code);
+                wmem_strbuf_append(ja4h_data.method, ja4h_code);
 
                 http_req = field->hfinfo->parent;
             }
 
             if (strcmp(field->hfinfo->abbrev, "http2.headers.method") == 0) {
-                wmem_strbuf_append_printf(ja4h_data.version, "20");
+                wmem_strbuf_append(ja4h_data.version, "20");
                 ja4h_data.http2 = true;
             }
 
@@ -1015,6 +1177,7 @@ static int dissect_ja4(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void
                         ja4h_data.sorted_cookies, (void *)new_cookie, sort_by_string
                     );
                 }
+                g_strfreev(strings);
             }
 
             if (field->hfinfo->parent == http_req) {
@@ -1034,6 +1197,7 @@ static int dissect_ja4(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void
                             ja4h_data.num_headers++;
                         }
                     }
+                    g_strfreev(strings);
                 }
             }
 
@@ -1137,9 +1301,9 @@ static int dissect_ja4(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void
                             // Denotes first PSH, ACK
                             nstime_copy(&conn->timestamp_D, packet_time);
                         } else {
-                            wmem_strbuf_t *display = wmem_strbuf_new(wmem_file_scope(), "");
-                            wmem_strbuf_t *display2 = wmem_strbuf_new(wmem_file_scope(), "");
-    
+                            wmem_strbuf_t *display = wmem_strbuf_new(pinfo->pool, "");
+                            wmem_strbuf_t *display2 = wmem_strbuf_new(pinfo->pool, "");
+
                             bool is_http = false;
                             GPtrArray *proto_http_array = proto_find_first_finfo(tree, proto_http);
                             if (proto_http_array && proto_http_array->len > 0) {
@@ -1156,20 +1320,15 @@ static int dissect_ja4(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void
                                     wmem_strbuf_append_printf(
                                         display, "%d_%d_tcp", latency.nsecs / 2 / 1000, conn->server_ttl
                                     );
-                                    update_tree_item(
-                                        tvb, tree, &ja4_tree, hf_ja4ls,
-                                        wmem_strbuf_get_str(display), "tcp"
-                                    );
+                                    update_tree_item(pinfo->num, hf_ja4ls, wmem_strbuf_get_str(display), "tcp");
 
                                     nstime_delta(&latency, &conn->timestamp_C, &conn->timestamp_B);
                                     wmem_strbuf_append_printf(
                                         display2, "%d_%d_tcp", latency.nsecs / 2 / 1000,
                                         conn->client_ttl
                                     );
-                                    update_tree_item(
-                                        tvb, tree, &ja4_tree, hf_ja4l,
-                                        wmem_strbuf_get_str(display2), "tcp"
-                                    );
+                                    update_tree_item(pinfo->num, hf_ja4l, wmem_strbuf_get_str(display2), "tcp");
+                                    mark_complete(pinfo->num);
                                 }
                             }
 
@@ -1185,10 +1344,11 @@ static int dissect_ja4(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void
                                         display, "%d_%d_%d", latency.nsecs / 2 / 1000, conn->server_ttl,
                                         latency2.nsecs / 2 / 1000
                                     );
-                                    update_tree_item(
-                                        tvb, tree, &ja4_tree, hf_ja4ls,
-                                        wmem_strbuf_get_str(display), "tcp"
-                                    );
+                                    update_tree_item(pinfo->num, hf_ja4ls, wmem_strbuf_get_str(display), "tcp");
+
+                                    double delta = (double)latency2.nsecs / (double)latency.nsecs;
+                                    delta = round(delta * 10.0) / 10.0;
+                                    update_tree_item(pinfo->num, hf_ja4ls_delta, &delta, "tcp");
 
                                     nstime_delta(&latency, &conn->timestamp_C, &conn->timestamp_B);
                                     nstime_delta(&latency2, &conn->timestamp_F, &conn->timestamp_E);
@@ -1196,10 +1356,12 @@ static int dissect_ja4(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void
                                         display2, "%d_%d_%d", latency.nsecs / 2 / 1000,
                                         conn->client_ttl, latency2.nsecs / 2 / 1000
                                     );
-                                    update_tree_item(
-                                        tvb, tree, &ja4_tree, hf_ja4l,
-                                        wmem_strbuf_get_str(display2), "tcp"
-                                    );
+                                    update_tree_item(pinfo->num, hf_ja4l, wmem_strbuf_get_str(display2), "tcp");
+
+                                    double delta2 = (double)latency2.nsecs / (double)latency.nsecs;
+                                    delta2 = round(delta2 * 10.0) / 10.0;
+                                    update_tree_item(pinfo->num, hf_ja4l_delta, &delta2, "tcp");
+                                    mark_complete(pinfo->num);
                                 }
                             }
                         }
@@ -1209,9 +1371,8 @@ static int dissect_ja4(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void
                 // Fix to add JA4SSH when a connection terminates
                 if ((fvalue_get_uinteger(get_value_ptr(field)) == 0x011) &&
                     ((srcport == 22) || (dstport == 22))) {
-                    update_tree_item(
-                        tvb, tree, &ja4_tree, hf_ja4ssh, ja4ssh(conn), "tcp"
-                    );
+                    update_tree_item(pinfo->num, hf_ja4ssh, ja4ssh(pinfo->pool, conn), "tcp");
+                    mark_complete(pinfo->num);
                 }
             }
 
@@ -1244,26 +1405,21 @@ static int dissect_ja4(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void
                         (nstime_is_zero(&conn->timestamp_D))) {
                         nstime_copy(&conn->timestamp_D, packet_time);
 
-                        wmem_strbuf_t *display = wmem_strbuf_new(wmem_file_scope(), "");
-                        wmem_strbuf_t *display2 = wmem_strbuf_new(wmem_file_scope(), "");
+                        wmem_strbuf_t *display = wmem_strbuf_new(pinfo->pool, "");
+                        wmem_strbuf_t *display2 = wmem_strbuf_new(pinfo->pool, "");
 
                         nstime_delta(&latency, &conn->timestamp_B, &conn->timestamp_A);
                         wmem_strbuf_append_printf(
                             display, "%d_%d_quic", latency.nsecs / 2 / 1000, conn->server_ttl
                         );
-                        update_tree_item(
-                            tvb, tree, &ja4_tree, hf_ja4ls,
-                            wmem_strbuf_get_str(display), "quic"
-                        );
+                        update_tree_item(pinfo->num, hf_ja4ls, wmem_strbuf_get_str(display), "quic");
 
                         nstime_delta(&latency, &conn->timestamp_D, &conn->timestamp_C);
                         wmem_strbuf_append_printf(
                             display2, "%d_%d_quic", latency.nsecs / 2 / 1000, conn->client_ttl
                         );
-                        update_tree_item(
-                            tvb, tree, &ja4_tree, hf_ja4l,
-                            wmem_strbuf_get_str(display2), "quic"
-                        );
+                        update_tree_item(pinfo->num, hf_ja4l, wmem_strbuf_get_str(display2), "quic");
+                        mark_complete(pinfo->num);
                     }
                 }
             }
@@ -1294,9 +1450,8 @@ static int dissect_ja4(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void
                     : update_mode(tcp_len, conn->client_mode);
 
                 if ((conn->pkts % SAMPLE_COUNT) == 0) {
-                    update_tree_item(
-                        tvb, tree, &ja4_tree, hf_ja4ssh, ja4ssh(conn), "ssh"
-                    );
+                    update_tree_item(pinfo->num, hf_ja4ssh, ja4ssh(pinfo->pool, conn), "ssh");
+                    mark_complete(pinfo->num);
 
                     // reset conn parameters for the next ssh iteration
                     conn->tcp_server_acks = conn->tcp_client_acks = conn->client_pkts =
@@ -1313,16 +1468,34 @@ static int dissect_ja4(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void
             // DHCPv4
             if (strcmp(field->hfinfo->abbrev, "dhcp.option.dhcp") == 0) {
                 ja4d_data.proto = '4';
-                ja4d_data.type = fvalue_get_uinteger(get_value_ptr(field));
+                unsigned dhcp_type = fvalue_get_uinteger(get_value_ptr(field));
+                const char *type_code = get_dhcp_type_code(dhcp_type);
+                if (type_code != NULL) {
+                    wmem_strbuf_append(ja4d_data.type, type_code);
+                } else {
+                    wmem_strbuf_append_printf(ja4d_data.type, "%05u", dhcp_type);
+                }
             }
             if (strcmp(field->hfinfo->abbrev, "dhcp.option.dhcp_max_message_size") == 0) {
-                wmem_strbuf_append_printf(
-                    ja4d_data.size, "%d", fvalue_get_uinteger(get_value_ptr(field))
-                );
+                if (fvalue_get_uinteger(get_value_ptr(field)) < 9999) {
+                    wmem_strbuf_append_printf(
+                        ja4d_data.size, "%04d", fvalue_get_uinteger(get_value_ptr(field))
+                    );
+                } else {
+                    wmem_strbuf_append_printf(
+                        ja4d_data.size, "9999"
+                    );
+                }
+            }
+            if (strcmp(field->hfinfo->abbrev, "dhcp.option.requested_ip_address") == 0) {
+                ja4d_data.ip = 'i';
+            }
+            if (strcmp(field->hfinfo->abbrev, "dhcp.fqdn.name") == 0) {
+                ja4d_data.fqdn = 'd';
             }
             if (strcmp(field->hfinfo->abbrev, "dhcp.option.type") == 0) {
-                guint val = fvalue_get_uinteger(get_value_ptr(field));
-                if (val != 0 && val != 53) {
+                unsigned val = fvalue_get_uinteger(get_value_ptr(field));
+                if (val != 0 && val != 53 && val != 50 && val != 81) {
                     wmem_strbuf_append_printf(ja4d_data.options, "%d-", val);
                 }
             }
@@ -1335,17 +1508,35 @@ static int dissect_ja4(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void
             // DHCPv6
             if (strcmp(field->hfinfo->abbrev, "dhcpv6.msgtype") == 0) {
                 ja4d_data.proto = '6';
-                ja4d_data.type = fvalue_get_uinteger(get_value_ptr(field));
+                unsigned dhcpv6_type = fvalue_get_uinteger(get_value_ptr(field));
+                const char *type_code = get_dhcpv6_type_code(dhcpv6_type);
+                if (type_code != NULL) {
+                    wmem_strbuf_append(ja4d_data.type, type_code);
+                } else {
+                    wmem_strbuf_append_printf(ja4d_data.type, "%05u", dhcpv6_type);
+                }
             }
             if (strcmp(field->hfinfo->abbrev, "dhcpv6.duid.bytes") == 0 &&
                 wmem_strbuf_get_len(ja4d_data.size) == 0 &&
                 dhcpv6_option_type_1_exists == true) {
-                wmem_strbuf_append_printf(
-                    ja4d_data.size, "%d", field->length
-                );
+                if (field->length < 9999) {
+                    wmem_strbuf_append_printf(
+                        ja4d_data.size, "%04d", field->length
+                    );
+                } else {
+                    wmem_strbuf_append_printf(
+                        ja4d_data.size, "9999"
+                    );
+                }
+            }
+            if (strcmp(field->hfinfo->abbrev, "dhcpv6.iata") == 0) {
+                ja4d_data.ip = 'i';
+            }
+            if (strcmp(field->hfinfo->abbrev, "dhcpv6.client_domain") == 0) {
+                ja4d_data.fqdn = 'd';
             }
             if (strcmp(field->hfinfo->abbrev, "dhcpv6.option.type") == 0) {
-                guint val = fvalue_get_uinteger(get_value_ptr(field));
+                unsigned val = fvalue_get_uinteger(get_value_ptr(field));
                 if (val == 1)
                     dhcpv6_option_type_1_exists = true;
                 wmem_strbuf_append_printf(
@@ -1358,11 +1549,12 @@ static int dissect_ja4(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void
                 );
             }
         }
-        g_ptr_array_free(items, TRUE);
+        g_ptr_array_free(items, true);
     }
 
     if (syn == 1) {
-        update_tree_item(tvb, tree, &ja4_tree, hf_ja4t, ja4t(&ja4t_data, NULL), "tcp");
+        update_tree_item(pinfo->num, hf_ja4t, ja4t(pinfo->pool, &ja4t_data, NULL), "tcp");
+        mark_complete(pinfo->num);
     }
     if (syn == 2) {
         conn_info_t *conn = conn_lookup(ja4_data.proto, stream);
@@ -1371,8 +1563,9 @@ static int dissect_ja4(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void
         conn->mss_val = ja4t_data.mss_val;
         if (conn->tcp_options == NULL)
             conn->tcp_options =
-                wmem_strbuf_new(wmem_file_scope(), wmem_strbuf_get_str(ja4t_data.tcp_options));
-        update_tree_item(tvb, tree, &ja4_tree, hf_ja4ts, ja4t(&ja4t_data, conn), "tcp");
+                wmem_strbuf_dup(wmem_file_scope(), ja4t_data.tcp_options);
+        update_tree_item(pinfo->num, hf_ja4ts, ja4t(pinfo->pool, &ja4t_data, conn), "tcp");
+        mark_complete(pinfo->num);
     }
 
     if (syn == 3) {
@@ -1381,33 +1574,33 @@ static int dissect_ja4(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void
         ja4t_data.window_size = conn->window_size;
         ja4t_data.mss_val = conn->mss_val;
         if (conn->tcp_options != NULL)
-            wmem_strbuf_append_printf(
-                ja4t_data.tcp_options, "%s", wmem_strbuf_get_str(conn->tcp_options)
+            wmem_strbuf_append(
+                ja4t_data.tcp_options, wmem_strbuf_get_str(conn->tcp_options)
             );
-        update_tree_item(tvb, tree, &ja4_tree, hf_ja4ts, ja4t(&ja4t_data, conn), "tcp");
+        update_tree_item(pinfo->num, hf_ja4ts, ja4t(pinfo->pool, &ja4t_data, conn), "tcp");
+        mark_complete(pinfo->num);
     }
 
     if (handshake_type == 2) {
         set_ja4_ciphers(tree, &ja4_data);
         set_ja4s_extensions(tree, &ja4_data);
-        update_tree_item(tvb, tree, &ja4_tree, hf_ja4s, ja4s(&ja4_data), proto);
-        update_tree_item(tvb, tree, &ja4_tree, hf_ja4s_raw, ja4s_r(&ja4_data), proto);
+        update_tree_item(pinfo->num, hf_ja4s, ja4s(pinfo->pool, &ja4_data), proto);
+        update_tree_item(pinfo->num, hf_ja4s_raw, ja4s_r(pinfo->pool, &ja4_data), proto);
+        mark_complete(pinfo->num);
     }
 
     if (handshake_type == 11) {
-        for (guint i = 0; i < cert_num + 1; i++) {
+        for (unsigned i = 0; i < cert_num + 1; i++) {
             cert_t *current_cert = (cert_t *)wmem_array_index(certificate_list, i);
             wmem_strbuf_append_printf(
                 current_cert->raw, "%s_%s_%s", wmem_strbuf_get_str(current_cert->oids[0]),
                 wmem_strbuf_get_str(current_cert->oids[1]),
                 wmem_strbuf_get_str(current_cert->oids[2])
             );
-            update_tree_item(
-                tvb, tree, &ja4_tree, hf_ja4x_raw,
-                wmem_strbuf_get_str(current_cert->raw), proto
-            );
-            update_tree_item(tvb, tree, &ja4_tree, hf_ja4x, ja4x(current_cert), proto);
+            update_tree_item(pinfo->num, hf_ja4x_raw, wmem_strbuf_get_str(current_cert->raw), proto);
+            update_tree_item(pinfo->num, hf_ja4x, ja4x(pinfo->pool, current_cert), proto);
         }
+        mark_complete(pinfo->num);
     }
 
     if (http_req != -100) {
@@ -1425,61 +1618,77 @@ static int dissect_ja4(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void
         }
 
         if (wmem_strbuf_get_len(ja4h_data.lang) == 0) {
-            wmem_strbuf_append_printf(ja4h_data.lang, "%s", "0000");
+            wmem_strbuf_append(ja4h_data.lang, "0000");
         }
 
         char *http_proto = "http";
         if (ja4h_data.http2 == true) {
             http_proto = "http2";
         }
-        update_tree_item(tvb, tree, &ja4_tree, hf_ja4h, ja4h(&ja4h_data), http_proto);
-        update_tree_item(
-            tvb, tree, &ja4_tree, hf_ja4h_raw, ja4h_r(&ja4h_data), http_proto
-        );
-        update_tree_item(
-            tvb, tree, &ja4_tree, hf_ja4h_raw_original, ja4h_ro(&ja4h_data), http_proto
-        );
+        update_tree_item(pinfo->num, hf_ja4h, ja4h(pinfo->pool, &ja4h_data), http_proto);
+        update_tree_item(pinfo->num, hf_ja4h_raw, ja4h_r(pinfo->pool, &ja4h_data), http_proto);
+        update_tree_item(pinfo->num, hf_ja4h_raw_original, ja4h_ro(pinfo->pool, &ja4h_data), http_proto);
+        mark_complete(pinfo->num);
     }
 
     if (ja4d_data.proto != 0) {
         wmem_strbuf_truncate(ja4d_data.options, wmem_strbuf_get_len(ja4d_data.options) - 1);
         wmem_strbuf_truncate(ja4d_data.request_list, wmem_strbuf_get_len(ja4d_data.request_list) - 1);
-        
+
         char *dhcp_proto = "dhcp";
         if (ja4d_data.proto == '6') {
             dhcp_proto = "dhcpv6";
         }
-        
-        update_tree_item(tvb, tree, &ja4_tree, hf_ja4d, ja4d(&ja4d_data), dhcp_proto);
+
+        update_tree_item(pinfo->num, hf_ja4d, ja4d(pinfo->pool, &ja4d_data), dhcp_proto);
+        mark_complete(pinfo->num);
     }
 
     return tvb_reported_length(tvb);
 }
 
-static void init_globals(void) {
-    conn_hash = wmem_map_new(wmem_file_scope(), g_direct_hash, g_direct_equal);
-    quic_conn_hash = wmem_map_new(wmem_file_scope(), g_direct_hash, g_direct_equal);
+static tap_packet_status tap_all(
+    void *tapdata _U_, packet_info *pinfo, epan_dissect_t *edt, const void *data _U_,
+    tap_flags_t flags _U_
+) {
+    display_hashes_from_packet_table(edt->tree, edt->tvb, pinfo->num);
+    return TAP_PACKET_DONT_REDRAW;;
+}
 
-    GArray *wanted_hfids = g_array_new(FALSE, FALSE, (guint)sizeof(int));
-    for (int i = 0; i < HFIDS; i++) {
+static int frame_tapdata;
+
+static void init_globals(void) {
+    GArray *wanted_hfids = g_array_new(false, false, (unsigned)sizeof(int));
+    for (size_t i = 0; i < array_length(interesting_hfids); i++) {
         int id = proto_registrar_get_id_byname(interesting_hfids[i]);
         if (id != -1) {
             g_array_append_val(wanted_hfids, id);
-        } else {
-            g_warning("JA4: Unknown field: %s", interesting_hfids[i]);
-}
+        }
     }
 
     set_postdissector_wanted_hfids(ja4_handle, wanted_hfids);
 
-    proto_http = proto_registrar_get_id_byname("http");
+    conn_hash = wmem_map_new_autoreset(wmem_epan_scope(), wmem_file_scope(), g_direct_hash, g_direct_equal);
+    quic_conn_hash = wmem_map_new_autoreset(wmem_epan_scope(), wmem_file_scope(), g_direct_hash, g_direct_equal);
+    packet_table = wmem_map_new_autoreset(wmem_epan_scope(), wmem_file_scope(), g_direct_hash, g_direct_equal);
+
+    if (proto_is_protocol_enabled(find_protocol_by_id(proto_ja4))) {
+        GString *ret = register_tap_listener("frame", &frame_tapdata, NULL, TL_REQUIRES_PROTO_TREE, NULL, tap_all, NULL, NULL);
+        if (ret != NULL) {
+            ws_warning("Unable to register tap listener: %s\n", ret->str);
+            g_string_free(ret, true);
+        }
+    }
 }
 
 static void cleanup_globals(void) {
     set_postdissector_wanted_hfids(ja4_handle, NULL);
+
+    remove_tap_listener(&frame_tapdata);
 }
 
 void proto_reg_handoff_ja4(void) {
+    proto_http = proto_registrar_get_id_byname("http");
 }
 
 void proto_register_ja4(void) {
@@ -1493,14 +1702,18 @@ void proto_register_ja4(void) {
         {&hf_ja4h_raw_original,
          {"JA4H Raw (Original)", "ja4.ja4h_ro", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}           },
         {&hf_ja4l,              {"JA4L", "ja4.ja4l", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}      },
+        {&hf_ja4l_delta,
+         {"JA4L Delta", "ja4.ja4l_delta", FT_DOUBLE, BASE_NONE, NULL, 0x0, NULL, HFILL}                 },
         {&hf_ja4ls,             {"JA4LS", "ja4.ja4ls", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}    },
+        {&hf_ja4ls_delta,
+         {"JA4LS Delta", "ja4.ja4ls_delta", FT_DOUBLE, BASE_NONE, NULL, 0x0, NULL, HFILL}               },
         {&hf_ja4ssh,            {"JA4SSH", "ja4.ja4ssh", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}  },
         {&hf_ja4t,              {"JA4T", "ja4.ja4t", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}      },
-        {&hf_ja4ts,             {"JA4T-S", "ja4.ja4ts", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}   },
+        {&hf_ja4ts,             {"JA4TS", "ja4.ja4ts", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}   },
         {&hf_ja4d,              {"JA4D", "ja4.ja4d", FT_STRING, BASE_NONE, NULL, 0x0, NULL, HFILL}      }
     };
 
-    static gint *ett[] = {
+    static int *ett[] = {
         &ett_ja4,
     };
 
@@ -1515,10 +1728,9 @@ void proto_register_ja4(void) {
     register_postdissector(ja4_handle);
 
     module_t *ja4_module = prefs_register_protocol(proto_ja4, NULL);
-    prefs_register_bool_preference(
-        ja4_module, "omit_ja4h_zero_sections", "Omit zero sections in JA4H",
-        "If enabled, zeroed JA4H fingerprint sections (e.g., "
-        "'000000000000') will be omitted when cookies are missing.",
-        &pref_omit_ja4h_zero_sections
-    );
+    prefs_register_bool_preference(ja4_module,
+                                   "omit_ja4h_zero_sections",
+                                   "Omit zero sections in JA4H",
+                                   "If enabled, zeroed JA4H fingerprint sections (e.g., '000000000000') will be omitted when cookies are missing.",
+                                   &pref_omit_ja4h_zero_sections);
 }

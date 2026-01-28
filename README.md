@@ -2,7 +2,7 @@
 <img src="ja4+_transparent_logo.png" alt="logo" width="250"/>
 </p>
 
-# JA4+ Network Fingerprinting <!-- omit from toc -->
+# JA4+™ Network Fingerprinting <!-- omit from toc -->
 
 JA4+ is a suite of network fingerprinting methods by [FoxIO](https://foxio.io/) that are easy to use and easy to share. These methods are both human and machine readable to facilitate more effective threat-hunting and analysis. The use-cases for these fingerprints include scanning for threat actors, malware detection, session hijacking prevention, compliance automation, location tracking, DDoS detection, grouping of threat actors, reverse shell detection, and many more.
 
@@ -32,6 +32,8 @@ If you love JA4+, consider getting a t-shirt or hoodie:
     - [Windows](#windows)
   - [Running JA4+](#running-ja4)
 - [Database](#database)
+- [Release Process](#release-process)
+  - [How to Create a Release](#how-to-create-a-release)
 - [JA4+ Details](#ja4-details)
 - [Licensing](#licensing)
 - [Q\&A](#qa)
@@ -51,6 +53,8 @@ If you love JA4+, consider getting a t-shirt or hoodie:
 | JA4TCP | JA4T | TCP Client Fingerprinting |
 | JA4TCPServer | JA4TS | TCP Server Response Fingerprinting |
 | [JA4TCPScan](https://github.com/FoxIO-LLC/ja4tscan) | [JA4TScan](https://github.com/FoxIO-LLC/ja4tscan) | [Active TCP Fingerprint Scanner](https://github.com/FoxIO-LLC/ja4tscan) |
+| JA4DHCP | JA4D | DHCP Fingerprinting |
+| JA4DHCPv6 | JA4D6 | DHCPv6 Fingerprinting |
 
 The full name or short name can be used interchangeably. Additional JA4+ methods are in the works...
 
@@ -76,13 +80,12 @@ This repo includes JA4+ in
 | [GreyNoise](https://www.greynoise.io/) | JA4+ |
 | [Hunt](https://hunt.io/) | JA4+ |
 | [Driftnet](https://driftnet.io/) | JA4+ |
-| [DarkSail](https://darksail.ai) | JA4+ |
 | [GoLang](https://github.com/driftnet-io/go-ja4x) | JA4X |
 | [nzyme](https://www.nzyme.org/) | JA4+ (under development) |
 | [Netresec's CapLoader](https://www.netresec.com/?page=Blog&month=2023-11&post=CapLoader-1-9-6-Released) | JA4+ (under development) |
 | [Netresec's NetworkMiner](https://www.netresec.com/?page=NetworkMiner) | JA4+ (under development) |
-| [NGINX](https://github.com/FoxIO-LLC/ja4-nginx-module) | JA4+ (under development) |
-| [F5 BIG-IP](https://github.com/f5devcentral/f5-ja4) | JA4+ (via iRules) |
+| [NGINX](https://github.com/FoxIO-LLC/ja4-nginx-module) | JA4+ |
+| [F5 BIG-IP](https://github.com/f5devcentral/f5-ja4) | JA4+ |
 | [nfdump](https://github.com/phaag/nfdump) | JA4+ |
 | [ntop's ntopng](https://github.com/ntop/ntopng) | JA4+ |
 | [ntop's nDPI](https://github.com/ntop/nDPI) | JA4 |
@@ -91,7 +94,7 @@ This repo includes JA4+ in
 | [Censys](https://censys.com/) | JA4+ |
 | [Exploit.org's Netryx](https://github.com/OWASP/www-project-netryx) | JA4 and JA4H |
 | [Cloudflare](https://developers.cloudflare.com/bots/concepts/ja3-ja4-fingerprint/) | JA4 |
-| [Fastly](https://www.fastly.com/documentation/reference/vcl/variables/client-connection/tls-client-ja4/) | JA4 |
+| [Fastly](https://www.fastly.com/documentation/reference/vcl/variables/client-connection/tls-client-ja4/) | JA4+ (ask for it) |
 | [MISP](https://www.misp-project.org/) | JA4+ |
 | [OCSF](https://schema.ocsf.io/1.3.0-dev/objects/ja4_fingerprint?extensions=) | JA4+ |
 | [Vercel](https://vercel.com/docs/security/tls-fingerprints) | JA4 |
@@ -101,10 +104,10 @@ This repo includes JA4+ in
 | [ELLIO](https://ellio.tech/) | JA4+ |
 | [Webscout](https://webscout.io/) | JA4+ |
 | [Rama](https://github.com/plabayo/rama) | JA4 and JA4H |
-| [Vectra](https://www.vectra.ai/) | JA4+ (under development) |
+| [Vectra](https://www.vectra.ai/) | JA4+ |
 | [AWS WAF](https://aws.amazon.com/about-aws/whats-new/2025/03/aws-waf-ja4-fingerprinting-aggregation-ja3-ja4-fingerprints-rate-based-rules/) | JA4 |
 | [Tacticly](https://tactic.ly/) | JA4+ |
-| [Palo Alto Networks](https://www.paloaltonetworks.com/cortex/cortex-xpanse) | JA4+ (under development) |
+| [Palo Alto Networks](https://www.paloaltonetworks.com/cortex/cortex-xpanse) | JA4+ |
 | [ngrok](https://ngrok.com/docs/traffic-policy/variables/connection/#conntlsja4_fingerprint) | JA4 |
 | [Vertex Synapse](https://vertex.link/) | JA4 and JA4S |
 | [Google Cloud Armor](https://cloud.google.com/armor/docs/rules-language-reference#allow_or_deny_traffic_based_on_a_known_ja4_fingerprint) | JA4 |
@@ -113,6 +116,16 @@ This repo includes JA4+ in
 | [IntelliGenesis](https://intelligenesisllc.com/) | JA4+ |
 | [HAProxy](https://www.haproxy.org/) | [JA4](https://github.com/O-X-L/haproxy-ja4-fingerprint) and [JA4H](https://github.com/O-X-L/haproxy-ja4h-fingerprint) plugins by [OXL](https://www.o-x-l.com/) |
 | [SentinelOne](https://www.sentinelone.com/) | JA4 |
+| [Akamai](https://techdocs.akamai.com/application-security/reference/get-ja4-fingerprint-settings) | JA4 |
+| [Alibaba Cloud](https://www.alibabacloud.com/help/en/anti-ddos/anti-ddos-pro-and-premium/user-guide/fields-included-in-full-logs) | JA4 |
+| [Huawei Cloud](https://support.huaweicloud.com/intl/en-us/usermanual-waf/waf_01_3157.html) | JA4 |
+| [Google Cloud LBs](https://cloud.google.com/release-notes#July_28_2025) | JA4 |
+| [eSentire](https://www.esentire.com/) | JA4+ |
+| [Microsoft Azure Front Door CDN](https://learn.microsoft.com/en-us/azure/frontdoor/front-door-http-headers-protocol) | JA4 |
+| [Moat](https://github.com/arxignis/moat) by [Arxignis](https://arxignis.com) | JA4+ |
+| [Zscaler](https://www.zscaler.com/blogs/product-insights/zscaler-endpoint-context-endpoint-cloud-visibility-and-enforcement-secops) | JA4 |
+| [ExtraHop](https://www.extrahop.com/) | JA4+ |
+| [Validin](https://www.validin.com/) | JA4+ |
 
 with more to be announced...  
 
@@ -132,8 +145,10 @@ with more to be announced...
 | LummaC2 | ```JA4H=po11nn050000_d253db9d024b``` |
 | Evilginx | ```JA4=t13d191000_9dc949149365_e7c285222651``` |
 | Reverse SSH Shell | ```JA4SSH=c76s76_c71s59_c0s70``` |
-| Windows 10 | ```JA4T=64240_2-1-3-1-1-4_1460_8``` |
+| Windows 11 | ```JA4T=64240_2-1-3-1-1-4_1460_8``` |
 | Epson Printer | ```JA4TScan=28960_2-4-8-1-3_1460_3_1-4-8-16``` |
+| Windows 11 | ```JA4D=disco0000in_61-12-60-55_1-3-6-15-31-33-43-44-46-47-119-121-249-252``` |
+| Sony Receiver | ```JA4D6=solct0010nn_8-1-3-6_24-23``` |
 
 For more examples, see [ja4plus-mapping.csv](./ja4plus-mapping.csv)  
 For a complete database, see [ja4db.com](https://ja4db.com/)
@@ -150,13 +165,17 @@ JA4 binaries are built from the [Rust implementation](rust/README.md) of the sui
 
 ### Release Assets
 
-JA4 binaries are provided as compressed archives named according to the target platform, following a pattern like:
 
-```txt
-ja4-vX.Y.Z-<architecture>-<platform>.tar.gz
-```
+Release assets are named according to the component and platform:
 
-For example, `ja4-v0.18.5-x86_64-unknown-linux-musl.tar.gz` for Linux or `ja4-v0.18.5-aarch64-apple-darwin.tar.gz` for macOS ARM64. Choose the appropriate file for your system.
+- **Rust:**
+  - `ja4-vX.Y.Z-<architecture>-<platform>.tar.gz` (e.g., `ja4-v0.18.5-x86_64-unknown-linux-musl.tar.gz`)
+- **Python:**
+  - `ja4-python-vX.Y.Z.tar.gz` (contains the full `python/` directory)
+- **Wireshark:**
+  - `ja4.so.linux`, `ja4.so.macos`, `ja4.dll` (attached to a release named like `wireshark-vX.Y.Z`)
+
+Choose the appropriate file for your system and component.
 
 ### Installing tshark
 
@@ -204,6 +223,52 @@ The official JA4+ database of fingerprints, associated applications and recommen
 This database is under very active development. Expect orders of magnitude more fingerprint combinations and data over the next few months.
 
 A sample [ja4plus-mapping.csv](./ja4plus-mapping.csv) is also available for quick reference.
+
+## Release Process
+
+
+JA4+ uses GitHub Actions to automate releases for its Rust, Python, Wireshark, and Zeek components. Releases are created by pushing a tag with a specific prefix to the repository, except for Zeek, which uses a pure semantic version (semver) tag. Release assets are named as follows:
+
+- **Rust:** `ja4-vX.Y.Z-<architecture>-<platform>.tar.gz`
+- **Python:** `ja4-python-vX.Y.Z.tar.gz`
+- **Wireshark:** `ja4.so.linux`, `ja4.so.macos`, `ja4.dll` (in a release named like `wireshark-vX.Y.Z`)
+
+The following workflows are available:
+
+- **Rust Release:**  
+  Push a tag starting with `rust-`, e.g., `rust-v0.18.5`, to trigger a release of the Rust binaries. The workflow will build and upload release assets automatically.
+
+- **Python Release:**  
+  Push a tag starting with `python-`, e.g., `python-v0.1.0`, to trigger a release of the Python implementation. The workflow will create a tarball of the `python/` directory and publish it as a release asset.
+
+- **Wireshark Plugin Release:**  
+  Push a tag starting with `wireshark-`, e.g., `wireshark-v0.1.1`, to trigger a release of the Wireshark plugin binaries for all supported platforms.
+
+- **Zeek Release:**  
+  Push a tag that is a pure semantic version (e.g., `v1.2.3`), with no prefix, to trigger a Zeek release. This will automatically create a release on [packages.zeek.org](https://packages.zeek.org/).
+
+### How to Create a Release
+
+1. Ensure your changes are merged into the `main` branch.
+
+2. Create and push a tag for the component you want to release:
+   - For Rust, Python, or Wireshark, use the appropriate prefix (e.g., `rust-v0.18.5`, `python-v0.1.0`, `wireshark-v0.1.1`).
+   - For Zeek, use a pure semver tag (e.g., `v1.2.3`).
+
+   Example:
+   ```sh
+   git tag v1.2.3
+   git push origin v1.2.3
+   ```
+   (For Zeek)
+
+   Or, for Rust:
+   ```sh
+   git tag rust-v0.18.5
+   git push origin rust-v0.18.5
+   ```
+
+3. The corresponding GitHub Actions workflow will run and publish the release assets automatically. For Zeek, the release will appear on [packages.zeek.org](https://packages.zeek.org/).
 
 ## JA4+ Details
 
@@ -267,4 +332,5 @@ And engineers working at GreyNoise, Hunt, Google, ExtraHop, F5, Driftnet and oth
 
 Contact John Althouse at john@foxio.io for licensing and questions.
 
-<sub><sup>Copyright (c) 2024, FoxIO</sup></sub>
+<sub>JA4 and JA4+ are trademarks of FoxIO, Inc.  
+Copyright (c) 2025, FoxIO</sup>

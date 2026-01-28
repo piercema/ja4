@@ -11,7 +11,9 @@ JA4LS &rarr; `conn.log`
 JA4T &rarr; `conn.log`  
 JA4TS &rarr; `conn.log`  
 JA4SSH &rarr; `ja4ssh.log`  
-JA4X &rarr; `x509.log` (still in development)  
+JA4D &rarr; `ja4d.log`  
+JA4D6 &rarr; `ja4d.log` (awaiting Zeek DHCPv6 suppport)  
+JA4X &rarr; `x509.log` (awaiting Zeek object support)  
 
 See [JA4+ and implementations into other open source tools](../README.md) for more detail on JA4+ and implementations into other open source tools.
 
@@ -20,6 +22,7 @@ See [JA4+ and implementations into other open source tools](../README.md) for mo
 - [Install](#install)
 - [Requirements](#requirements)
 - [Config](#config)
+- [Creating a Release](#creating-a-release)
 - [License](#license)
 
 ## Install
@@ -45,6 +48,15 @@ Zeek 6+ is required for QUIC support.
 
 Individual JA4+ methods can be enabled or disabled in config.zeek.  
 The raw output for JA4+ methods (non-hashed) can also be enabled in config.zeek
+
+## Creating a Release
+
+To create a Zeek release, push a tag that is a pure semantic version (e.g., `v1.2.3`), with no prefix:
+
+```sh
+git tag v1.2.3
+git push origin v1.2.3
+```
 
 ## License
 
