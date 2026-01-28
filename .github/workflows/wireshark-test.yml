@@ -1,14 +1,14 @@
-name: Wireshark Plugin Test
+name: Wireshark - Test
 
 on:
   push:
     paths:
-      - .github/workflows/wireshark-test.yml
-      - wireshark/**
+      - '.github/workflows/wireshark-test.yml'
+      - 'wireshark/**'
   pull_request:
     paths:
-      - .github/workflows/wireshark-test.yml
-      - wireshark/**
+      - '.github/workflows/wireshark-test.yml'
+      - 'wireshark/**'
 
 jobs:
   run-wireshark-tests:
@@ -21,6 +21,7 @@ jobs:
 
       - name: Install required packages
         run: |
+          sudo add-apt-repository ppa:wireshark-dev/stable
           sudo apt update
           sudo apt upgrade -y
           sudo apt -y install \
@@ -37,8 +38,8 @@ jobs:
             | head -n1 \
             | sed -E 's/.* ([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
           PLUGIN_VERSION=$(echo "$TSHARK_VERSION" | cut -d. -f1,2)
-          sudo ./linux_build.sh $TSHARK_VERSION
-          sudo cp wireshark-$TSHARK_VERSION/build/run/plugins/$PLUGIN_VERSION/epan/ja4.so /usr/lib/x86_64-linux-gnu/wireshark/plugins/$PLUGIN_VERSION/epan
+          sudo ./linux_build.sh v$TSHARK_VERSION
+          sudo cp v$TSHARK_VERSION/build/run/plugins/$PLUGIN_VERSION/epan/ja4.so /usr/lib/x86_64-linux-gnu/wireshark/plugins/$PLUGIN_VERSION/epan
         working-directory: wireshark/build-scripts
 
       - name: Run tests
