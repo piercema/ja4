@@ -8,73 +8,14 @@
 #include "zeek/Val.h"
 #include "zeek/ZVal.h"
 #include "zeek/Conn.h"
+#include "zeek/Desc.h"
+#include "zeek/Reporter.h"
 #include "zeek/analyzer/protocol/ssl/SSL.h"
 
 
-#include "helpers.h"
+#include "common.h"
 #include "ja4.h"
 #include "ssl-consts.h"
-
-std::vector<std::string> convert_string_vector(const zeek::IntrusivePtr<zeek::VectorVal>& vec_val)
-{
-    std::vector<std::string> result;
-    if ( ! vec_val )
-        return result;
-
-    auto length = vec_val->Size();
-    result.reserve(length);
-
-    for ( int i = 0; i < length; ++i )
-    {
-        auto element_val = vec_val->ValAt(i);
-        if ( ! element_val )
-            continue;
-
-        auto str_val = cast_intrusive<zeek::StringVal>(element_val);
-        if ( ! str_val )
-            continue;
-
-        result.push_back(str_val->AsString()->ToStdString());
-    }
-
-    return result;
-}
-
-
-std::vector<uint32_t> convert_count_vector_to_u32(const zeek::IntrusivePtr<zeek::VectorVal>& vec_val)
-{
-    std::vector<uint32_t> result;
-    if ( ! vec_val )
-        return result;
-
-    auto length = vec_val->Size();
-    result.reserve(length);
-
-    for ( int i = 0; i < length; ++i )
-    {
-        auto element_val = vec_val->ValAt(i);
-        if ( ! element_val )
-            continue;
-
-        auto int_val = cast_intrusive<zeek::IntVal>(element_val);
-        if ( ! int_val )
-            continue;
-
-        uint64_t full_value = int_val->AsCount();
-
-        // Optional safety check to avoid overflow
-        if ( full_value > UINT32_MAX ) {
-            fprintf(stderr, "Warning: count %llu too large for uint32_t\n",
-                    static_cast<unsigned long long>(full_value));
-            continue;
-        }
-
-        result.push_back(static_cast<uint32_t>(full_value));
-    }
-
-    return result;
-}
-
 
 std::string b_hash(std::vector<uint32_t> input) {
     return FINGERPRINT::sha256_or_null__12(
@@ -101,9 +42,10 @@ std::string make_a(TransportProto transport_proto, std::string conn_service, std
 
     // TLS version mapping
     std::string version_for_hash = "00";
-    auto it = TLS_VERSION_MAPPER.find(version);
-    if (it != TLS_VERSION_MAPPER.end()) {
-        version_for_hash = it->second;
+    std::__map_iterator<std::__tree_iterator<std::__value_type<unsigned short, std::string>, std::__tree_node<std::__value_type<unsigned short, std::string>, void *> *, long>> version_mapper = TLS_VERSION_MAPPER.find(version);
+
+    if (version_mapper != TLS_VERSION_MAPPER.end()) {
+        version_for_hash = version_mapper->second;
     }
 
     // Determine SNI status
@@ -152,86 +94,106 @@ zeek::ValPtr do_ja4(zeek::RecordVal* conn_record, zeek::StringVal* delimiter) {
     std::string delimiter_val(reinterpret_cast<const char*>(zstr->Bytes()), zstr->Len());
 
 
-    auto ja4_return_value_type = zeek::id::find_type<zeek::RecordType>("FINGERPRINT::JA4::Info");
-    auto ja4_return_value = zeek::make_intrusive<zeek::RecordVal>(ja4_return_value_type);
+    zeek::IntrusivePtr<zeek::RecordType> ja4_return_value_type = zeek::id::find_type<zeek::RecordType>("FINGERPRINT::JA4::Info");
 
-    auto fingerprint = cast_intrusive<zeek::RecordVal>(conn_record->GetField("fp"));
+    zeek::IntrusivePtr<zeek::RecordVal> ja4_return_value = zeek::make_intrusive<zeek::RecordVal>(ja4_return_value_type);
 
-    int sni_exists = fingerprint->HasField("sni");
+    zeek::IntrusivePtr<zeek::RecordVal> fingerprint = cast_intrusive<zeek::RecordVal>(conn_record->GetField("fp"));
+    zeek::IntrusivePtr<zeek::RecordVal> client_hello = cast_intrusive<zeek::RecordVal>(fingerprint->GetField("client_hello"));
+    zeek::IntrusivePtr<zeek::RecordVal> conn_data = cast_intrusive<zeek::RecordVal>(conn_record->GetField("conn"));
+    
+    bool sni_exists = client_hello->HasField("sni");
     std::vector<std::string> sni;
     if (sni_exists == false){
         sni = std::vector<std::string>();
     }
     else {
-        auto sni_val = fingerprint->GetField("sni");
-        auto sni_vec = cast_intrusive<zeek::VectorVal>(sni_val);
+        zeek::IntrusivePtr<zeek::Val> sni_val = client_hello->GetField("sni");
+        zeek::IntrusivePtr<zeek::VectorVal> sni_vec = cast_intrusive<zeek::VectorVal>(sni_val);
         sni = convert_string_vector(sni_vec);
     }
 
     std::vector<std::string> alpns;
-    auto alpns_exists = fingerprint->HasField("alpns");
+    bool alpns_exists = client_hello->HasField("alpns");
+
     if (alpns_exists == false){
         alpns = std::vector<std::string>();
     }
     else {
-        auto alpns_val = fingerprint->GetField("alpns");
-        auto alpns_vec = cast_intrusive<zeek::VectorVal>(alpns_val);
+        zeek::IntrusivePtr<zeek::Val> alpns_val = client_hello->GetField("alpns");
+        zeek::IntrusivePtr<zeek::VectorVal> alpns_vec = cast_intrusive<zeek::VectorVal>(alpns_val);
         alpns = convert_string_vector(alpns_vec);
     }
 
     std::vector<uint32_t> cipher_suites;
-    auto cipher_suites_exists = fingerprint->HasField("cipher_suites");
+    bool cipher_suites_exists = client_hello->HasField("cipher_suites");
+
     if (cipher_suites_exists == false){
         cipher_suites = std::vector<uint32_t>();
     }
     else {
-        auto cipher_suites_val = fingerprint->GetField("cipher_suites");
-        auto cipher_suites_vec = cast_intrusive<zeek::VectorVal>(cipher_suites_val);
+        zeek::IntrusivePtr<zeek::Val> cipher_suites_val = client_hello->GetField("cipher_suites");
+        zeek::IntrusivePtr<zeek::VectorVal> cipher_suites_vec = cast_intrusive<zeek::VectorVal>(cipher_suites_val);
         cipher_suites = convert_count_vector_to_u32(cipher_suites_vec);
     }
 
     std::vector<uint32_t> extension_codes;
-    auto extension_codes_exists = fingerprint->HasField("cipher_suites");
+    bool extension_codes_exists = client_hello->HasField("cipher_suites");
     if (extension_codes_exists == false){
         extension_codes = std::vector<uint32_t>();
     }
     else {
-        auto extension_codes_val = fingerprint->GetField("extension_codes");
-        auto extension_codes_vec = cast_intrusive<zeek::VectorVal>(extension_codes_val);
+        zeek::IntrusivePtr<zeek::Val> extension_codes_val = client_hello->GetField("extension_codes");
+        zeek::IntrusivePtr<zeek::VectorVal> extension_codes_vec = cast_intrusive<zeek::VectorVal>(extension_codes_val);
         extension_codes = convert_count_vector_to_u32(extension_codes_vec);
     }
 
     uint32_t version = 0;
-    auto version_exists = fingerprint->HasField("version"); 
+    bool version_exists = client_hello->HasField("version"); 
     if (version_exists == false){
         version = 0;
     }
     else {
-        auto version_val = fingerprint->GetField("version");
+        zeek::IntrusivePtr<zeek::Val> version_val = client_hello->GetField("version");
         version = static_cast<uint32_t>(zeek::cast_intrusive<zeek::IntVal>(version_val)->AsCount());
     }
    
     std::vector<uint32_t> signature_algos;
-    auto signature_algos_exists = fingerprint->HasField("cipher_suites");
+    bool signature_algos_exists = client_hello->HasField("signature_algos");
     if (signature_algos_exists == false){
         signature_algos = std::vector<uint32_t>();
     }
     else {
-        auto signature_algos_val = fingerprint->GetField("signature_algos");
-        auto signature_algos_vec = cast_intrusive<zeek::VectorVal>(signature_algos_val);
-        auto signature_algos = convert_count_vector_to_u32(signature_algos_vec);
+        zeek::IntrusivePtr<zeek::Val> signature_algos_val = client_hello->GetField("signature_algos");
+        zeek::IntrusivePtr<zeek::VectorVal> signature_algos_vec = cast_intrusive<zeek::VectorVal>(signature_algos_val);
+        signature_algos = convert_count_vector_to_u32(signature_algos_vec);
     }
 
-    auto service_str_value = zeek::cast_intrusive<zeek::StringVal>(conn_record->GetField("service"));
-    std::string service = service_str_value->AsString()->ToStdString();
+    bool service_exists = conn_record->HasField("service");
+    std::string service;
+    if (service_exists == false){
+        service = "";
+    }
+    else {
+        zeek::IntrusivePtr<zeek::Val> service_str_value = conn_record->GetField("service");
+        zeek::TableVal* service_table = service_str_value->AsTableVal();
+        service = TableToJSONString(service_table);
+    }
+    
+    bool proto_exists = conn_data->HasField("proto");
 
-    auto protocol_value = conn_record->GetField("proto");
-    auto protocol_enum_val = zeek::cast_intrusive<zeek::EnumVal>(protocol_value);
-    int tag = static_cast<int>(protocol_enum_val->AsInt());
+    zeek::IntrusivePtr<zeek::EnumVal> protocol_enum_val;
+    TransportProto transport_proto;
+    if (proto_exists == false){
+        // Handle missing protocol field if necessary
+        transport_proto = TransportProto::TRANSPORT_UNKNOWN;
+    }
+    else {
+        zeek::IntrusivePtr<zeek::Val> proto_val = conn_data->GetField("proto");
+        protocol_enum_val = zeek::cast_intrusive<zeek::EnumVal>(proto_val);
+        transport_proto = static_cast<TransportProto>(protocol_enum_val->AsInt());
+    }
 
-    TransportProto transport_proto = static_cast<TransportProto>(tag);
-
-        
     std::string ja4_a = make_a(transport_proto, service, sni, alpns, cipher_suites, extension_codes, version);
     std::vector<uint32_t> ja4_b = cipher_suites; 
 
@@ -249,11 +211,12 @@ zeek::ValPtr do_ja4(zeek::RecordVal* conn_record, zeek::StringVal* delimiter) {
         FINGERPRINT::order_vector_of_count(extensions)
     );
 
-    if (!signature_algos.empty()) {
+    if (signature_algos.size() > 0) {
+        zeek::reporter->Info("Adding signature algorithms to ja4_c");
         ja4_c += delimiter_val;
         ja4_c += FINGERPRINT::vector_of_count_to_str(signature_algos);
     }
-
+    zeek::reporter->Info("%s", ja4_c.c_str());
     // ja4
     std::string ja4_string = ja4_a + delimiter_val +
                              b_hash(FINGERPRINT::order_vector_of_count(ja4_b)) +
@@ -270,7 +233,7 @@ zeek::ValPtr do_ja4(zeek::RecordVal* conn_record, zeek::StringVal* delimiter) {
 
     // ja4_o
     ja4_c = FINGERPRINT::vector_of_count_to_str(extension_codes);
-    if (signature_algos.empty()) {
+    if (signature_algos.size() > 0) {
         ja4_c += delimiter_val;
         ja4_c += FINGERPRINT::vector_of_count_to_str(signature_algos);
     }
@@ -286,11 +249,6 @@ zeek::ValPtr do_ja4(zeek::RecordVal* conn_record, zeek::StringVal* delimiter) {
     ja4_return_value->Assign(4, zeek::make_intrusive<zeek::StringVal>(ro));
 
     delete zstr;
-    delete conn_record;
-    delete delimiter;
 
     return ja4_return_value;
 }
-
-    // Optional: logging
-    // Log::write(FINGERPRINT::JA4::LOG, c.fp->ja4);

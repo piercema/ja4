@@ -10,11 +10,10 @@
 #include "zeek/Val.h"
 #include "zeek/ZVal.h"
 #include "zeek/Conn.h"
-#include "ja4.h"
+#include "zeek/DebugLogger.h"
 
-namespace plugin { namespace JA4_JA4 { Plugin plugin; } }
 
-using namespace plugin::JA4_JA4;
+using namespace zeek::plugin::JA4_JA4;
 
 zeek::plugin::Configuration Plugin::Configure()
 	{

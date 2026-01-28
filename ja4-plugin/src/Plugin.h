@@ -3,17 +3,14 @@
 
 #include <zeek/plugin/Plugin.h>
 
-namespace plugin {
-namespace JA4_JA4 {
+namespace zeek::plugin::JA4_JA4{
+
 
 class Plugin : public zeek::plugin::Plugin
 {
-protected:
+public:
 	// Overridden from zeek::plugin::Plugin.
 	zeek::plugin::Configuration Configure() override;
-};
+} plugin;
 
-extern Plugin plugin;
-
-}
 }
