@@ -1,15 +1,17 @@
+#pragma once
+
 #include <unordered_set>
 #include <cstdint>
 #include <map>
 #include <string>
 
 enum SSL {
-    DTLSv10 = 0xfeff, 
+    DTLSv10 = 0xfeff,
     DTLSv12 = 0xfefd,
-    DTLSv13 = 0xfefc  
+    DTLSv13 = 0xfefc
 };
 
-std::map<uint16_t, std::string> TLS_VERSION_MAPPER = {
+inline std::map<uint16_t, std::string> TLS_VERSION_MAPPER = {
     {0x0002, "s2"},
     {0x0300, "s3"},
     {0x0301, "10"},
@@ -21,7 +23,7 @@ std::map<uint16_t, std::string> TLS_VERSION_MAPPER = {
     {SSL::DTLSv13, "d3"},
 };
 
-std::unordered_set<uint16_t> TLS_GREASE_TYPES = {
+inline std::unordered_set<uint16_t> TLS_GREASE_TYPES = {
     0x0a0a, 0x1a1a, 0x2a2a, 0x3a3a,
     0x4a4a, 0x5a5a, 0x6a6a, 0x7a7a,
     0x8a8a, 0x9a9a, 0xaaaa, 0xbaba,

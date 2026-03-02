@@ -9,7 +9,6 @@
 #include "zeek/ZVal.h"
 #include "zeek/Conn.h"
 #include "zeek/Desc.h"
-#include "zeek/Reporter.h"
 #include "zeek/analyzer/protocol/ssl/SSL.h"
 
 
@@ -42,7 +41,7 @@ std::string make_a(TransportProto transport_proto, std::string conn_service, std
 
     // TLS version mapping
     std::string version_for_hash = "00";
-    std::__map_iterator<std::__tree_iterator<std::__value_type<unsigned short, std::string>, std::__tree_node<std::__value_type<unsigned short, std::string>, void *> *, long>> version_mapper = TLS_VERSION_MAPPER.find(version);
+    auto version_mapper = TLS_VERSION_MAPPER.find(version);
 
     if (version_mapper != TLS_VERSION_MAPPER.end()) {
         version_for_hash = version_mapper->second;
@@ -87,8 +86,6 @@ std::string make_a(TransportProto transport_proto, std::string conn_service, std
 }
 
 zeek::ValPtr do_ja4(zeek::RecordVal* conn_record, zeek::StringVal* delimiter) {
-
-    // JA4Info ja4_return_value;
 
     const zeek::String* zstr = delimiter->AsStringVal()->AsString();
     std::string delimiter_val(reinterpret_cast<const char*>(zstr->Bytes()), zstr->Len());
@@ -138,7 +135,7 @@ zeek::ValPtr do_ja4(zeek::RecordVal* conn_record, zeek::StringVal* delimiter) {
     }
 
     std::vector<uint32_t> extension_codes;
-    bool extension_codes_exists = client_hello->HasField("cipher_suites");
+    bool extension_codes_exists = client_hello->HasField("extension_codes");
     if (extension_codes_exists == false){
         extension_codes = std::vector<uint32_t>();
     }
@@ -212,11 +209,10 @@ zeek::ValPtr do_ja4(zeek::RecordVal* conn_record, zeek::StringVal* delimiter) {
     );
 
     if (signature_algos.size() > 0) {
-        zeek::reporter->Info("Adding signature algorithms to ja4_c");
         ja4_c += delimiter_val;
         ja4_c += FINGERPRINT::vector_of_count_to_str(signature_algos);
     }
-    zeek::reporter->Info("%s", ja4_c.c_str());
+
     // ja4
     std::string ja4_string = ja4_a + delimiter_val +
                              b_hash(FINGERPRINT::order_vector_of_count(ja4_b)) +
@@ -247,8 +243,6 @@ zeek::ValPtr do_ja4(zeek::RecordVal* conn_record, zeek::StringVal* delimiter) {
                     FINGERPRINT::vector_of_count_to_str(ja4_b) + delimiter_val + ja4_c;
 
     ja4_return_value->Assign(4, zeek::make_intrusive<zeek::StringVal>(ro));
-
-    delete zstr;
 
     return ja4_return_value;
 }
