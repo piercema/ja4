@@ -18,3 +18,7 @@ redef record connection += { fp: FINGERPRINT::Info &optional; };
 @if (JA4SSH_enabled)
   @load ./ja4ssh
 @endif
+
+@if (JA4T_enabled)
+  @load ./ja4t
+@endif
