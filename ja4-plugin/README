@@ -1,5 +1,71 @@
 
-JA4::JA4
-=================================
+JA4+ Zeek Plugin
+=================
 
-<Insert plugin documentation here.>
+A compiled Zeek plugin implementing JA4+ network fingerprinting.
+Replaces the pure-script implementation with C++ BiF functions for
+performance-critical fingerprints.
+
+Fingerprints
+------------
+
+C++ accelerated (BiF):
+  JA4   - TLS client fingerprint
+  JA4S  - TLS server fingerprint
+  JA4H  - HTTP client fingerprint
+  JA4SSH - SSH traffic fingerprint
+  JA4T  - TCP client fingerprint (raw packet parsing)
+
+Pure script (bundled):
+  JA4L  - Connection latency
+  JA4D  - DHCP fingerprint
+
+Requirements
+------------
+
+  Zeek >= 7.0 (tested with 8.0.6)
+  C++20 compiler (Clang 19+ or GCC 12+)
+  CMake >= 3.15
+
+Build
+-----
+
+  cd ja4-plugin
+  ./configure
+  cd build
+  make -j$(nproc)
+
+Or via zkg:
+
+  zkg install .
+
+Usage
+-----
+
+  # Plugin auto-loads JA4/JA4S/JA4SSH/JA4T/JA4L/JA4D
+  ZEEK_PLUGIN_PATH=/path/to/ja4-plugin/build zeek -C -r trace.pcap
+
+  # JA4H requires explicit loading (HTTP::Info dependency)
+  ZEEK_PLUGIN_PATH=/path/to/ja4-plugin/build zeek -C -r trace.pcap /path/to/ja4-plugin/scripts/ja4h
+
+Output: fingerprint fields are added to ssl.log, conn.log, http.log,
+and dedicated ja4ssh.log / ja4d.log streams.
+
+Configuration
+-------------
+
+Each fingerprint can be toggled in scripts/config.zeek:
+
+  redef FINGERPRINT::JA4_enabled = F;   # disable JA4
+  redef FINGERPRINT::JA4H_enabled = F;  # disable JA4H
+
+Tests
+-----
+
+  # btest suite (requires btest in PATH)
+  cd ja4-plugin/tests && btest
+
+License
+-------
+
+See LICENSE

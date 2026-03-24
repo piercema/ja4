@@ -19,10 +19,10 @@ zeek::plugin::Configuration Plugin::Configure()
 	{
 	zeek::plugin::Configuration config;
 	config.name = "JA4::JA4";
-	config.description = "Calculate the JA4 hash for an encrypted connection";
-	config.version.major = 0;
+	config.description = "JA4+ network fingerprinting (JA4/JA4S/JA4H/JA4SSH/JA4T/JA4L/JA4D)";
+	config.version.major = 1;
 
-	config.version.minor = 1;
+	config.version.minor = 0;
 	config.version.patch = 0;
 
 	return config;
