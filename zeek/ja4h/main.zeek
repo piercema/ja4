@@ -191,10 +191,7 @@ event http_message_done(c: connection, is_orig: bool, stat: http_message_stat)
 
     local ja4h_a = get_ja4h_a(c);
     local ja4h_b_o = FINGERPRINT::vector_of_str_to_str(c$fp$http_client$header_names_o);
-    local header_names_sorted = string_vec();
-    header_names_sorted += c$fp$http_client$header_names;
-    sort(header_names_sorted, strcmp);
-    local ja4h_b_r = FINGERPRINT::vector_of_str_to_str(header_names_sorted);
+    local ja4h_b_r = FINGERPRINT::vector_of_str_to_str(c$fp$http_client$header_names);
     local ja4h_b = FINGERPRINT::sha256_or_null__12(ja4h_b_r);
     local ja4h_c_o = FINGERPRINT::vector_of_str_to_str(c$fp$http_client$cookie_names);
     local ja4h_c_r = get_ja4h_c(c);  

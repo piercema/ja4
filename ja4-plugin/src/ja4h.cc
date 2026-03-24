@@ -48,7 +48,6 @@ zeek::ValPtr do_ja4h(zeek::RecordVal* conn_record) {
 
     // B section: header names (excluding Cookie & Referer)
     auto ja4h_b_o = vector_of_str_to_str(header_names_o);
-    std::sort(header_names.begin(), header_names.end());
     std::string ja4h_b_r = vector_of_str_to_str(header_names);
     auto ja4h_b = sha256_or_null__12(ja4h_b_r);
     // C section: cookie names
